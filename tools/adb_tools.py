@@ -46,6 +46,34 @@ def type_text(text):
     time.sleep(0.5)
 
 
+def type_text_slow(text):
+    """
+    Type text character by character (slower, more reliable)
+    
+    Args:
+        text: Text to type character by character
+    """
+    import subprocess
+    for char in text:
+        if char == ' ':
+            subprocess.run(["adb", "shell", "input", "text", "%s"], check=False)
+        else:
+            subprocess.run(["adb", "shell", "input", "text", char], check=False)
+        time.sleep(0.08)  # Delay between characters
+
+
+def keycombination(code1, code2):
+    """
+    Send a key combination (e.g., Ctrl+A)
+    
+    Args:
+        code1: First key code (e.g., 113 for CTRL)
+        code2: Second key code (e.g., 29 for A)
+    """
+    adb(f"shell input keyevent {code1} {code2}")
+    time.sleep(0.3)
+
+
 def keyevent(code):
     """
     Send a key event to the device
@@ -101,6 +129,54 @@ def get_current_activity():
     """
     result = adb("shell dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp'")
     return result.stdout
+
+
+def get_current_package_and_activity():
+    """
+    Get current package name and activity name
+    
+    Returns:
+        Dictionary with "package" and "activity" keys, or {"package": None, "activity": None} if failed
+    """
+    import re
+    try:
+        result = adb("shell dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp'")
+        output = result.stdout
+        
+        # Pattern to match package/activity: "package.name/ActivityName"
+        pattern = r'([\w\.]+)/([\w\.\$]+)'
+        
+        for line in output.split('\n'):
+            if 'mCurrentFocus' in line or 'mFocusedApp' in line:
+                match = re.search(pattern, line)
+                if match:
+                    package = match.group(1)
+                    activity = match.group(2)
+                    if package and activity:
+                        return {"package": package, "activity": activity}
+        
+        # Fallback: try dumpsys activity activities
+        try:
+            result = subprocess.check_output(
+                ["adb", "shell", "dumpsys", "activity", "activities"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                timeout=3
+            )
+            for line in result.split('\n'):
+                if 'mResumedActivity' in line or 'mFocusedActivity' in line:
+                    match = re.search(pattern, line)
+                    if match:
+                        package = match.group(1)
+                        activity = match.group(2)
+                        if package and activity:
+                            return {"package": package, "activity": activity}
+        except:
+            pass
+        
+        return {"package": None, "activity": None}
+    except Exception:
+        return {"package": None, "activity": None}
 
 
 def reset_app(package_name="md.obsidian"):
@@ -256,6 +332,31 @@ def find_element_by_text(text):
         return None
     
     text_lower = text.lower().strip()
+    
+    # SPECIAL HANDLING: "use this folder" - must match exact phrase, NOT "create new folder"
+    if "use this folder" in text_lower:
+        # First pass: look for exact "use this folder" phrase
+        for node in root.iter("node"):
+            node_text = node.attrib.get("text", "").lower().strip()
+            content_desc = node.attrib.get("content-desc", "").lower().strip()
+            # Must contain "use this folder" but NOT "create" or "new"
+            if ("use this folder" in node_text or "use this folder" in content_desc) and \
+               "create" not in node_text and "new" not in node_text:
+                bounds = node.attrib.get("bounds")
+                if bounds and bounds != "[0,0][0,0]":
+                    return bounds
+        # If exact not found, try just "use this" (but still avoid "create new")
+        for node in root.iter("node"):
+            node_text = node.attrib.get("text", "").lower().strip()
+            content_desc = node.attrib.get("content-desc", "").lower().strip()
+            if ("use this" in node_text or "use this" in content_desc) and \
+               "create" not in node_text and "new" not in node_text:
+                bounds = node.attrib.get("bounds")
+                if bounds and bounds != "[0,0][0,0]":
+                    return bounds
+        # If still not found, return None to avoid matching wrong button
+        return None
+    
     # Try exact match first, then partial match
     search_terms = [text_lower]
     # Add word-based searches
@@ -275,6 +376,10 @@ def find_element_by_text(text):
         search_terms.extend(["create", "new note", "create note", "note"])
     if "appearance" in text_lower:
         search_terms.extend(["appearance", "theme", "color", "display"])
+    if "app storage" in text_lower or ("storage" in text_lower and "app" in text_lower):
+        # Priority: find "app storage" or "internal storage" (NOT device storage)
+        search_terms.extend(["app storage", "internal storage", "app", "internal"])
+        # Explicitly avoid "device storage" - don't add it to search terms
     
     # For InternVault, prioritize exact text match over partial matches
     if "internvault" in text_lower:
@@ -293,6 +398,32 @@ def find_element_by_text(text):
                 bounds = node.attrib.get("bounds")
                 if bounds and bounds != "[0,0][0,0]":
                     return bounds
+    
+    # Special handling for "app storage" - must NOT match "device storage"
+    if "app storage" in text_lower or ("storage" in text_lower and "app" in text_lower):
+        # First pass: look for "app storage" or "internal storage" (NOT device storage)
+        for node in root.iter("node"):
+            node_text = node.attrib.get("text", "").lower().strip()
+            content_desc = node.attrib.get("content-desc", "").lower().strip()
+            # Must contain "app" or "internal" but NOT "device"
+            if (("app storage" in node_text or "internal storage" in node_text or 
+                 "app storage" in content_desc or "internal storage" in content_desc) and
+                "device" not in node_text and "device" not in content_desc):
+                bounds = node.attrib.get("bounds")
+                if bounds and bounds != "[0,0][0,0]":
+                    return bounds
+        # Second pass: try just "app" or "internal" (but still avoid device)
+        for node in root.iter("node"):
+            node_text = node.attrib.get("text", "").lower().strip()
+            content_desc = node.attrib.get("content-desc", "").lower().strip()
+            if (("app" in node_text or "internal" in node_text) and
+                "device" not in node_text and "device" not in content_desc and
+                ("storage" in node_text or "storage" in content_desc)):
+                bounds = node.attrib.get("bounds")
+                if bounds and bounds != "[0,0][0,0]":
+                    return bounds
+        # If not found, return None to avoid matching wrong option
+        return None
     
     # Second pass: general search for all other terms
     for node in root.iter("node"):
