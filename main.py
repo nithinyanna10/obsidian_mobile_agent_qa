@@ -33,6 +33,7 @@ def run_test_suite():
         print(f"✓ OpenAI API key configured\n")
     
     results = []
+    previous_test_passed = False  # Track if previous test passed
     
     # Reset app only before first test (tests are sequential)
     print("🔄 Resetting app state before first test...")
@@ -66,7 +67,8 @@ def run_test_suite():
                 
                 # Planner: Analyze screenshot + Android state and decide next action
                 print("📋 Planning next action from screenshot + Android state...")
-                next_action = plan_next_action(test["text"], screenshot_path, action_history)
+                # Pass previous test result to planner (for Test 2 to know Test 1 passed)
+                next_action = plan_next_action(test["text"], screenshot_path, action_history, previous_test_passed=previous_test_passed)
                 
                 # Log what we're about to do
                 action_type = next_action.get("action", "unknown")
@@ -136,6 +138,12 @@ def run_test_suite():
             test_result["error"] = str(e)
         
         results.append(test_result)
+        
+        # Update previous_test_passed for next test
+        if test_result.get("status") == "PASS" and test["id"] == 1:
+            previous_test_passed = True
+            print(f"  ✓ Test 1 passed - Test 2 will assume we're in vault\n")
+        
         time.sleep(1)  # Brief pause between tests
     
     # Print summary
