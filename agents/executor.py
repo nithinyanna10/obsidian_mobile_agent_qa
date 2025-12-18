@@ -4,7 +4,7 @@ Executes exactly ONE action and takes screenshot
 Uses UIAutomator to find real coordinates when LLM provides generic ones
 Never assumes success
 """
-from tools.adb_tools import tap, type_text, keyevent, swipe, open_app, find_element_by_text, bounds_to_center, dump_ui, get_ui_text
+from tools.adb_tools import tap, type_text, type_text_slow, keyevent, keycombination, swipe, open_app, find_element_by_text, bounds_to_center, dump_ui, get_ui_text
 from tools.screenshot import take_screenshot
 from config import OBSIDIAN_PACKAGE
 import time
@@ -63,7 +63,9 @@ def execute_action(action):
                         # For "Tap to create new note" - find create note button
                         search_texts = ["create", "note", "new note", "add", "+"]
                     elif "use this folder" in desc_lower or "this folder" in desc_lower:
-                        search_texts = ["use this folder", "use", "this", "folder", "select"]
+                        # CRITICAL: Must match exact "use this folder" phrase, NOT "create new folder"
+                        # The find_element_by_text function will handle this, but prioritize exact match
+                        search_texts = ["use this folder"]  # Only exact match, no partial words
                     elif "internvault" in desc_lower:
                         # Priority: find InternVault vault name first (exact match)
                         # Try to find the actual vault name text, not "enter vault" button
@@ -81,6 +83,13 @@ def execute_action(action):
                     elif "close" in desc_lower and "button" in desc_lower:
                         # For settings - try back key instead of close button
                         search_texts = ["back", "close", "cancel", "done"]
+                    elif "app storage" in desc_lower or ("storage" in desc_lower and "app" in desc_lower):
+                        # Priority: find "app storage" or "internal storage" (NOT device storage)
+                        search_texts = ["app storage", "internal storage", "app", "internal"]
+                        # Explicitly avoid "device storage"
+                    elif "storage" in desc_lower:
+                        # Generic storage selection - prefer app/internal over device
+                        search_texts = ["app storage", "internal storage", "app", "internal", "storage"]
                     else:
                         # Extract key words
                         words = [w for w in description.split() if len(w) > 2]
@@ -120,47 +129,182 @@ def execute_action(action):
                 tap(x, y)
                 time.sleep(1.5)  # Wait for UI to update
             
-        elif action_type == "type":
-            text = action.get("text", "")
-            print(f"  ⌨️  Type: {description} - '{text}'")
+        elif action_type == "focus":
+            target = action.get("target", "")
+            print(f"  🎯 Focus: {description} (target: {target})")
             
-            # First, focus the input field by tapping it (if we can find it)
-            # Try to find EditText field using UIAutomator
             try:
                 root = dump_ui()
                 if root:
+                    edittexts = []
                     for node in root.iter("node"):
                         class_name = node.attrib.get("class", "").lower()
                         if "edittext" in class_name:
                             bounds = node.attrib.get("bounds")
                             if bounds and bounds != "[0,0][0,0]":
-                                tap_x, tap_y = bounds_to_center(bounds)
-                                if tap_x and tap_y:
-                                    print(f"  📍 Focusing input field at ({tap_x}, {tap_y})")
-                                    tap(tap_x, tap_y)
-                                    time.sleep(0.5)
-                                    # Clear existing text: select all and delete
-                                    keyevent(113)  # KEYCODE_CTRL_A (select all)
-                                    time.sleep(0.2)
-                                    keyevent(67)   # KEYCODE_DEL (delete)
-                                    time.sleep(0.3)
-                                    break
+                                # Parse bounds to get coordinates and size
+                                try:
+                                    b = bounds.replace("[", "").replace("]", ",").split(",")
+                                    x1, y1, x2, y2 = map(int, b[:4])
+                                    center_x = (x1 + x2) // 2
+                                    center_y = (y1 + y2) // 2
+                                    width = x2 - x1
+                                    height = y2 - y1
+                                    area = width * height
+                                    edittexts.append({
+                                        "node": node,
+                                        "bounds": bounds,
+                                        "x": center_x,
+                                        "y": center_y,
+                                        "y1": y1,
+                                        "area": area
+                                    })
+                                except:
+                                    continue
+                    
+                    if edittexts:
+                        selected = None
+                        if target == "title":
+                            # Title = smallest y (highest on screen)
+                            selected = min(edittexts, key=lambda e: e["y1"])
+                        elif target == "body":
+                            # Body = largest y (lowest) OR largest area
+                            # Prefer largest area, fallback to lowest y
+                            selected = max(edittexts, key=lambda e: (e["area"], e["y1"]))
+                        else:
+                            # Default: first EditText found
+                            selected = edittexts[0]
+                        
+                        if selected:
+                            print(f"  📍 Focusing {target} field at ({selected['x']}, {selected['y']})")
+                            tap(selected['x'], selected['y'])
+                            time.sleep(0.3)
+            except Exception as e:
+                print(f"  ⚠️  Could not find {target} field: {e}")
+            
+        elif action_type == "type":
+            text = action.get("text", "")
+            target = action.get("target", "")  # "title" or "body"
+            print(f"  ⌨️  Type: {description} - '{text}' (target: {target})")
+            
+            # If target is specified, focus that field first
+            if target:
+                # Call focus action internally
+                focus_action = {"action": "focus", "target": target, "description": f"Focus {target} field"}
+                # Execute focus
+                try:
+                    root = dump_ui()
+                    if root:
+                        edittexts = []
+                        for node in root.iter("node"):
+                            class_name = node.attrib.get("class", "").lower()
+                            if "edittext" in class_name:
+                                bounds = node.attrib.get("bounds")
+                                if bounds and bounds != "[0,0][0,0]":
+                                    try:
+                                        b = bounds.replace("[", "").replace("]", ",").split(",")
+                                        x1, y1, x2, y2 = map(int, b[:4])
+                                        center_x = (x1 + x2) // 2
+                                        center_y = (y1 + y2) // 2
+                                        width = x2 - x1
+                                        height = y2 - y1
+                                        area = width * height
+                                        edittexts.append({
+                                            "x": center_x,
+                                            "y": center_y,
+                                            "y1": y1,
+                                            "area": area
+                                        })
+                                    except:
+                                        continue
+                        
+                        if edittexts:
+                            selected = None
+                            if target == "title":
+                                selected = min(edittexts, key=lambda e: e["y1"])
+                            elif target == "body":
+                                selected = max(edittexts, key=lambda e: (e["area"], e["y1"]))
+                            else:
+                                selected = edittexts[0]
+                            
+                            if selected:
+                                print(f"  📍 Focusing {target} field at ({selected['x']}, {selected['y']})")
+                                tap(selected['x'], selected['y'])
+                                time.sleep(0.3)
+                except:
+                    pass
+            
+            # Clear existing text using Ctrl+A combo (better than keyevent)
+            try:
+                keycombination(113, 29)  # Ctrl + A
+                time.sleep(0.2)
+                keyevent(67)  # DEL
+                time.sleep(0.3)
             except:
-                pass  # If we can't find input field, just try typing anyway
+                # Fallback to old method
+                try:
+                    keyevent(113)  # KEYCODE_CTRL_A
+                    time.sleep(0.2)
+                    keyevent(67)   # KEYCODE_DEL
+                    time.sleep(0.3)
+                except:
+                    pass
             
             # Type the text
             type_text(text)
             time.sleep(1.5)  # Wait for text to appear
             
-            # Verify text was entered (optional check)
+            # Verify text was entered using UI dump (more reliable)
+            verified = False
             try:
-                ui_text = get_ui_text()
-                if text.lower() in " ".join(ui_text).lower():
-                    print(f"  ✓ Verified: '{text}' appears in UI")
-                else:
-                    print(f"  ⚠️  Warning: '{text}' may not have been entered correctly")
-            except:
-                pass
+                root = dump_ui()
+                if root:
+                    # Get all text from UI dump
+                    all_text = []
+                    for node in root.iter("node"):
+                        text_attr = node.attrib.get("text", "").strip()
+                        content_desc = node.attrib.get("content-desc", "").strip()
+                        if text_attr:
+                            all_text.append(text_attr)
+                        if content_desc:
+                            all_text.append(content_desc)
+                    
+                    # Normalize text for comparison
+                    def normalize(s):
+                        return ''.join(c.lower() for c in s if c.isalnum())
+                    
+                    text_normalized = normalize(text)
+                    ui_blob = normalize(" ".join(all_text))
+                    
+                    if text_normalized in ui_blob:
+                        print(f"  ✓ Verified: '{text}' appears in UI")
+                        verified = True
+                    else:
+                        print(f"  ⚠️  Warning: '{text}' not found in UI, retrying with slow typing...")
+                        # Retry with slow per-character typing
+                        type_text_slow(text)
+                        time.sleep(1.5)
+                        
+                        # Verify again
+                        root = dump_ui()
+                        if root:
+                            all_text = []
+                            for node in root.iter("node"):
+                                text_attr = node.attrib.get("text", "").strip()
+                                content_desc = node.attrib.get("content-desc", "").strip()
+                                if text_attr:
+                                    all_text.append(text_attr)
+                                if content_desc:
+                                    all_text.append(content_desc)
+                            
+                            ui_blob = normalize(" ".join(all_text))
+                            if text_normalized in ui_blob:
+                                print(f"  ✓ Verified after retry: '{text}' appears in UI")
+                                verified = True
+                            else:
+                                print(f"  ⚠️  Still not verified: '{text}' may not be entered correctly")
+            except Exception as e:
+                print(f"  ⚠️  Verification failed: {e}")
             
         elif action_type == "key":
             code = action.get("code", 0)
