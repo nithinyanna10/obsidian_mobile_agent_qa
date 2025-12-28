@@ -3,7 +3,6 @@ Supervisor Agent - Visual Verification
 Compares final screenshot with test expectation
 PASS only if visual goal is met
 """
-from openai import OpenAI
 from PIL import Image
 import os
 import sys
@@ -14,62 +13,7 @@ import time
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import OPENAI_API_KEY, OPENAI_MODEL
-
-
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-
-def call_openai_with_retry(messages, max_retries=3, **kwargs):
-    """
-    Call OpenAI API with retry logic for rate limits
-    
-    Args:
-        messages: Messages for the API call
-        max_retries: Maximum number of retries
-        **kwargs: Additional arguments for chat.completions.create
-    
-    Returns:
-        API response or raises exception
-    """
-    for attempt in range(max_retries):
-        try:
-            return client.chat.completions.create(model=OPENAI_MODEL, messages=messages, **kwargs)
-        except Exception as e:
-            error_str = str(e)
-            # Check if it's a rate limit error (429)
-            if "429" in error_str or "rate_limit" in error_str.lower() or "rate limit" in error_str.lower():
-                if attempt < max_retries - 1:
-                    # Extract wait time from error if available
-                    wait_time = 2.0  # Default: 2 seconds
-                    if "try again in" in error_str.lower():
-                        # Try to extract the wait time from the error message (in milliseconds)
-                        import re
-                        match = re.search(r'try again in (\d+)\s*ms', error_str.lower())
-                        if match:
-                            wait_time_ms = int(match.group(1))
-                            wait_time = (wait_time_ms / 1000.0) + 0.5  # Convert ms to seconds, add 0.5s buffer
-                            wait_time = max(wait_time, 0.5)  # At least 0.5 seconds
-                        else:
-                            # Try without "ms" (might just be a number)
-                            match = re.search(r'try again in (\d+)', error_str.lower())
-                            if match:
-                                wait_time_ms = int(match.group(1))
-                                # If number is small (< 10), assume it's seconds, otherwise assume ms
-                                if wait_time_ms < 10:
-                                    wait_time = wait_time_ms + 0.5
-                                else:
-                                    wait_time = (wait_time_ms / 1000.0) + 0.5
-                    
-                    print(f"  ⚠️  Rate limit hit, waiting {wait_time:.2f}s before retry {attempt + 1}/{max_retries}...")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    raise  # Last attempt failed, raise the exception
-            else:
-                raise  # Not a rate limit error, raise immediately
-    return None
+from tools.ollama_client import call_ollama_vision
 
 
 def verify(test_text, screenshot_path, expected_result=None):
@@ -129,36 +73,21 @@ Output format (JSON):
 Be specific about what you see in the screenshot.
 """
         
-        # Call OpenAI Vision API
-        response = call_openai_with_retry(
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{img_data}"
-                            }
-                        }
-                    ]
-                }
-            ],
+        # Call Ollama Vision API
+        result_text = call_ollama_vision(
+            prompt=prompt,
+            image_base64=img_data,
             temperature=0.1
         )
         
-        if not response or not response.choices or not response.choices[0].message.content:
+        if not result_text:
             return {
                 "verdict": "ERROR",
                 "reason": "Empty response from model",
                 "details": "No content in API response"
             }
         
-        result_text = response.choices[0].message.content.strip()
+        result_text = result_text.strip()
         
         # Remove markdown code blocks if present
         if result_text.startswith("```json"):
