@@ -441,41 +441,72 @@ Output ONLY valid JSON, no markdown:"""
                     "description": "Vault 'InternVault' created and entered successfully"
                 }
             
-            # SECOND: Check if we just typed InternVault - need to press "Create vault" button
-            # Also check if we've typed it multiple times (loop detection)
+            # SECOND: Check if we just typed InternVault - need to press "Create vault" button or ENTER
+            # Check the LAST action to see if we just typed InternVault
             if action_history:
                 last_action = action_history[-1]
                 last_action_type = last_action.get("action", "").lower()
                 last_action_desc = last_action.get("description", "").lower()
                 
+                # Check if LAST action was typing InternVault (regardless of success/failure)
+                just_typed_internvault = (last_action_type == "type" and 
+                                         "internvault" in last_action_desc)
+                
+                if just_typed_internvault:
+                    # We just typed InternVault - MUST press ENTER or tap Create vault button IMMEDIATELY
+                    # Check if we're still on welcome_setup (need to press ENTER or tap button)
+                    if current_screen == 'welcome_setup' or current_screen == 'vault_selection':
+                        # ALWAYS prefer tapping "Create vault" button over ENTER (more reliable)
+                        # Check if button text is in UI
+                        if "create vault" in ui_text_lower or ("create" in ui_text_lower and "vault" in ui_text_lower):
+                            print(f"  → Just typed 'InternVault', tapping 'Create vault' button...")
+                            return {
+                                "action": "tap",
+                                "x": 0,
+                                "y": 0,
+                                "description": "Tap 'Create vault' button"
+                            }
+                        # Button not visible in UI text - try pressing ENTER, but prefer analyzing screenshot to find button
+                        # Actually, let's analyze screenshot to find the button first (more reliable)
+                        print(f"  → Just typed 'InternVault', analyzing screenshot to find 'Create vault' button...")
+                        # Force screenshot analysis to find the button
+                        force_screenshot_analysis = True
+                        # But also provide a fallback: if screenshot doesn't show button, press ENTER
+                        # For now, let's try pressing ENTER as fallback
+                        print(f"  → Button not in UI text, pressing ENTER to create vault...")
+                        return {
+                            "action": "key",
+                            "code": 66,
+                            "description": "Press ENTER after typing vault name"
+                        }
+                    # Not on welcome_setup - might have already created vault, continue to check
+                    print(f"  → Just typed 'InternVault', but not on welcome_setup (current: {current_screen}), checking vault status...")
+                    pass  # Continue to main planning logic
+                
+                # Also check for multiple typing attempts (loop detection)
                 recent_type_actions = [a for a in action_history[-3:] if 
                     a.get("action", "").lower() == "type" and "internvault" in a.get("description", "").lower()]
                 
-                if recent_type_actions:
-                    # We've typed InternVault recently - MUST press ENTER or tap Create vault button
-                    if "internvault" in ui_text_lower:
-                        # Name is visible - check if we're still on welcome_setup (need to press ENTER or tap button)
-                        if current_screen == 'welcome_setup' or current_screen == 'vault_selection':
-                            # Check if button text is in UI
+                if len(recent_type_actions) >= 2 and not just_typed_internvault:
+                    # We've typed InternVault multiple times but last action wasn't typing
+                    # Check if we need to press ENTER or tap button
+                    if current_screen == 'welcome_setup' or current_screen == 'vault_selection':
+                        if "internvault" in ui_text_lower:
+                            # Name is visible - try tapping Create vault button or pressing ENTER
                             if "create vault" in ui_text_lower or ("create" in ui_text_lower and "vault" in ui_text_lower):
-                                print(f"  → 'Create vault' button found in UI text, tapping it...")
+                                print(f"  → 'InternVault' typed multiple times, tapping 'Create vault' button...")
                                 return {
                                     "action": "tap",
                                     "x": 0,
                                     "y": 0,
                                     "description": "Tap 'Create vault' button"
                                 }
-                            # Button not visible - press ENTER instead
-                            print(f"  → Vault name 'InternVault' typed, pressing ENTER to create vault...")
+                            print(f"  → 'InternVault' typed multiple times, pressing ENTER...")
                             return {
                                 "action": "key",
                                 "code": 66,
                                 "description": "Press ENTER after typing vault name"
                             }
-                        # Button not in UI text - need to analyze screenshot to find it
-                        # Continue to main planning which will analyze screenshot
-                        print(f"  → Vault name typed, will analyze screenshot to find 'Create vault' button...")
-                        pass  # Continue to main planning logic which analyzes screenshot
                 
                 # After pressing ENTER or Create vault, check if we're in vault
                 if (last_action_type == "key" and "enter" in last_action_desc) or \
@@ -1188,11 +1219,14 @@ CRITICAL RULES:
       * If both are present → return assert action
     - After typing both title and content, return {{"action": "assert", "description": "Note 'Meeting Notes' with 'Daily Standup' created successfully"}}
 16. **CRITICAL FOR VAULT CREATION**: After typing "InternVault" as vault name:
+    - You MUST immediately press ENTER or tap "Create vault" button - DO NOT wait or do anything else
+    - PREFER tapping "Create vault" button over pressing ENTER (button is more reliable)
     - Analyze the screenshot CAREFULLY to find the "Create vault" button
     - Look for button text like "Create vault", "Create", or similar
     - If you see the button in the screenshot, tap it at the coordinates shown
     - If button is not clearly visible, use UIAutomator (return action with x=0, y=0 and description "Tap 'Create vault' button")
     - Do NOT skip clicking the Create vault button - it's required to create the vault
+    - After pressing ENTER or tapping button, wait for vault to be created (check if screen changed to vault_home)
 17. **CRITICAL FOR VAULT**: If you're on welcome_setup/vault_selection screen and the test goal is to create a note, the vault ALREADY EXISTS. DO NOT create a new vault. Look for the vault name "InternVault" in the UI and tap it to ENTER the existing vault. If you see "USE THIS FOLDER" button, you can tap that too.
 18. If you've typed vault name or created vault multiple times, STOP creating vaults and just enter the existing vault by tapping "InternVault" or "USE THIS FOLDER"
 19. **FOR TEST 3 (Settings)**: After tapping settings icon, look for "Appearance" tab or menu item. DO NOT try to close settings - explore it to find Appearance. If you can't find Appearance, look for tabs, menu items, or swipe to see more options.
@@ -1278,10 +1312,12 @@ CRITICAL RULES:
 7. **Check the action history - if you see [FAILED] or [WARNING], that action is not working**
 
 **CRITICAL FOR TEST 1 (Vault Creation):**
-- After typing "InternVault" as vault name, you MUST either:
-  * Press ENTER key: {{"action": "key", "code": 66, "description": "Press ENTER after typing vault name"}}, OR
-  * Tap "Create vault" button: {{"action": "tap", "x": 0, "y": 0, "description": "Tap 'Create vault' button"}}
-- DO NOT just type "InternVault" and stop - you MUST press ENTER or tap the button to create the vault
+- After typing "InternVault" as vault name, you MUST IMMEDIATELY either:
+  * Tap "Create vault" button: {{"action": "tap", "x": 0, "y": 0, "description": "Tap 'Create vault' button"}} (PREFERRED - more reliable), OR
+  * Press ENTER key: {{"action": "key", "code": 66, "description": "Press ENTER after typing vault name"}} (fallback)
+- PREFER tapping "Create vault" button over pressing ENTER - the button is more reliable
+- DO NOT just type "InternVault" and stop - you MUST press ENTER or tap the button IMMEDIATELY to create the vault
+- If you see "Create vault" button in the screenshot description, ALWAYS tap it instead of pressing ENTER
 
 **CRITICAL FOR TEST 2 (Note Creation with Title and Body):**
 - If "Meeting Notes" is already in the UI text (check screenshot description), you MUST focus the body field FIRST before typing "Daily Standup"
