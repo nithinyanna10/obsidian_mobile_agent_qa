@@ -2,7 +2,6 @@
 Planner Agent - Step-by-Step Visual Planning with Android State
 After each action, analyzes screenshot + Android state and decides the next single action
 """
-from openai import OpenAI
 from PIL import Image
 import json
 import os
@@ -13,63 +12,9 @@ import time
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL
+from config import OBSIDIAN_PACKAGE, OLLAMA_VISION_MODEL, OLLAMA_TEXT_MODEL, OLLAMA_APPROACH
 from tools.adb_tools import detect_current_screen, get_ui_text, dump_ui, get_current_package_and_activity
-
-
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-
-def call_openai_with_retry(messages, max_retries=3, **kwargs):
-    """
-    Call OpenAI API with retry logic for rate limits
-    
-    Args:
-        messages: Messages for the API call
-        max_retries: Maximum number of retries
-        **kwargs: Additional arguments for chat.completions.create
-    
-    Returns:
-        API response or raises exception
-    """
-    for attempt in range(max_retries):
-        try:
-            return client.chat.completions.create(model=OPENAI_MODEL, messages=messages, **kwargs)
-        except Exception as e:
-            error_str = str(e)
-            # Check if it's a rate limit error (429)
-            if "429" in error_str or "rate_limit" in error_str.lower() or "rate limit" in error_str.lower():
-                if attempt < max_retries - 1:
-                    # Extract wait time from error if available
-                    wait_time = 2.0  # Default: 2 seconds
-                    if "try again in" in error_str.lower():
-                        # Try to extract the wait time from the error message (in milliseconds)
-                        import re
-                        match = re.search(r'try again in (\d+)\s*ms', error_str.lower())
-                        if match:
-                            wait_time_ms = int(match.group(1))
-                            wait_time = (wait_time_ms / 1000.0) + 0.5  # Convert ms to seconds, add 0.5s buffer
-                            wait_time = max(wait_time, 0.5)  # At least 0.5 seconds
-                        else:
-                            # Try without "ms" (might just be a number)
-                            match = re.search(r'try again in (\d+)', error_str.lower())
-                            if match:
-                                wait_time_ms = int(match.group(1))
-                                # If number is small (< 10), assume it's seconds, otherwise assume ms
-                                if wait_time_ms < 10:
-                                    wait_time = wait_time_ms + 0.5
-                                else:
-                                    wait_time = (wait_time_ms / 1000.0) + 0.5
-                    
-                    print(f"  ⚠️  Rate limit hit, waiting {wait_time:.2f}s before retry {attempt + 1}/{max_retries}...")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    raise  # Last attempt failed, raise the exception
-            else:
-                raise  # Not a rate limit error, raise immediately
-    return None
+from tools.ollama_client import call_ollama_vision, call_ollama_chat
 
 
 def get_android_state():
@@ -366,21 +311,52 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                     "description": "Vault 'InternVault' created and entered successfully"
                 }
         
+        # ===== LOOP DETECTION: Force screenshot analysis if stuck =====
+        # Check if we're stuck in a loop (same action/state repeated)
+        force_screenshot_analysis = False
+        if len(action_history) >= 2:
+            # Check if last 2-4 actions are the same (stuck in loop)
+            recent_actions = [a.get("action", "") for a in action_history[-4:]]
+            recent_descriptions = [a.get("description", "").lower() for a in action_history[-4:]]
+            
+            # If same action repeated 2+ times, we're stuck
+            if len(recent_actions) >= 2 and len(set(recent_actions)) == 1:
+                if recent_actions[0] in ["wait", "tap", "type"]:
+                    force_screenshot_analysis = True
+                    print(f"  ⚠️  Loop detected: Same action '{recent_actions[0]}' repeated {len(recent_actions)} times - FORCING screenshot analysis")
+            
+            # If same description repeated, we're stuck
+            if len(recent_descriptions) >= 2 and len(set(recent_descriptions)) == 1:
+                force_screenshot_analysis = True
+                print(f"  ⚠️  Loop detected: Same action description repeated - FORCING screenshot analysis")
+            
+            # CRITICAL: If we've typed "InternVault" multiple times but Android state hasn't changed, we're stuck
+            type_actions = [a for a in action_history[-5:] if a.get("action") == "type" and "internvault" in a.get("description", "").lower()]
+            if len(type_actions) >= 3 and current_screen == 'welcome_setup':
+                # We've typed InternVault 3+ times but still on welcome_setup - typing is failing
+                force_screenshot_analysis = True
+                print(f"  ⚠️  CRITICAL: Typed 'InternVault' {len(type_actions)} times but still on welcome_setup - typing is failing!")
+                # Don't try typing again - need to tap "Create vault" button first or we're on wrong screen
+        
         # ===== HARD GATE 0: SCREENSHOT-BASED VAULT DETECTION (FALLBACK - ONLY IF UNCLEAR) =====
         # For Test 1: Only use screenshot analysis if state is unclear
-        # Skip if we're clearly in file picker or welcome screen (we're NOT in vault)
+        # BUT: ALWAYS use screenshot analysis if we're stuck in a loop
         if "create" in test_text.lower() and "vault" in test_text.lower() and "internvault" in test_text.lower():
             # Skip screenshot analysis if we're clearly NOT in vault (file picker, welcome screen, etc.)
-            if current_screen in ['welcome_setup', 'vault_selection'] or \
+            # UNLESS we're stuck in a loop - then force it
+            if not force_screenshot_analysis and (current_screen in ['welcome_setup', 'vault_selection'] or \
                any('file picker' in t.lower() or 'create vault' in t.lower() or 'use this folder' in t.lower() 
-                   for t in ui_text):
+                   for t in ui_text)):
                 # We're clearly NOT in vault, skip expensive screenshot analysis
                 print(f"  → Not in vault (state-based: {current_screen}), skipping screenshot analysis")
             else:
-                # State is unclear, use LLM to analyze screenshot
-                print(f"  🔍 Analyzing screenshot to check if already in InternVault vault...")
+                if force_screenshot_analysis:
+                    print(f"  🔍 FORCING screenshot analysis due to detected loop...")
+                else:
+                    # State is unclear, use LLM to analyze screenshot
+                    print(f"  🔍 Analyzing screenshot to check if already in InternVault vault...")
                 
-                # Read and encode screenshot
+                # Read and encode screenshot (always do this if we're in the else block)
                 img = Image.open(screenshot_path)
                 img_buffer = io.BytesIO()
                 img.save(img_buffer, format='PNG')
@@ -417,22 +393,14 @@ Return ONLY valid JSON:
 Output ONLY valid JSON, no markdown:"""
                 
                 try:
-                    scan_response = call_openai_with_retry(
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": scan_prompt},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
-                                ]
-                            }
-                        ],
-                        temperature=0.1,
-                        max_tokens=100
+                    scan_result_text = call_ollama_vision(
+                        prompt=scan_prompt,
+                        image_base64=img_data,
+                        temperature=0.1
                     )
                     
-                    if scan_response and scan_response.choices and scan_response.choices[0].message.content:
-                        scan_result_text = scan_response.choices[0].message.content.strip()
+                    if scan_result_text:
+                        scan_result_text = scan_result_text.strip()
                         # Remove markdown if present
                         if scan_result_text.startswith("```json"):
                             scan_result_text = scan_result_text[7:]
@@ -559,22 +527,14 @@ Return ONLY valid JSON:
 Output ONLY valid JSON, no markdown:"""
                         
                         try:
-                            verify_response = call_openai_with_retry(
-                                messages=[
-                                    {
-                                        "role": "user",
-                                        "content": [
-                                            {"type": "text", "text": verify_prompt},
-                                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
-                                        ]
-                                    }
-                                ],
-                                temperature=0.1,
-                                max_tokens=100
+                            verify_result_text = call_ollama_vision(
+                                prompt=verify_prompt,
+                                image_base64=img_data,
+                                temperature=0.1
                             )
                             
-                            if verify_response and verify_response.choices and verify_response.choices[0].message.content:
-                                verify_result_text = verify_response.choices[0].message.content.strip()
+                            if verify_result_text:
+                                verify_result_text = verify_result_text.strip()
                                 # Remove markdown if present
                                 if verify_result_text.startswith("```json"):
                                     verify_result_text = verify_result_text[7:]
@@ -777,22 +737,14 @@ Return ONLY valid JSON:
 Output ONLY valid JSON, no markdown:"""
                 
                 try:
-                    test2_check_response = call_openai_with_retry(
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": test2_check_prompt},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
-                                ]
-                            }
-                        ],
-                        temperature=0.1,
-                        max_tokens=100
+                    test2_check_text = call_ollama_vision(
+                        prompt=test2_check_prompt,
+                        image_base64=img_data,
+                        temperature=0.1
                     )
                     
-                    if test2_check_response and test2_check_response.choices and test2_check_response.choices[0].message.content:
-                        test2_check_text = test2_check_response.choices[0].message.content.strip()
+                    if test2_check_text:
+                        test2_check_text = test2_check_text.strip()
                         # Remove markdown if present
                         if test2_check_text.startswith("```json"):
                             test2_check_text = test2_check_text[7:]
@@ -1062,7 +1014,9 @@ Output ONLY valid JSON, no markdown:"""
                     "reason": f"Stuck in loop: Repeated action '{action_desc}' 3 times. Screen: {android_state.get('current_screen')}"
                 }
         
-        # Read screenshot
+        # Read screenshot - ALWAYS analyze screenshot in main planning
+        # This is mandatory to see what's actually on screen
+        print(f"  📸 Analyzing screenshot for main planning...")
         img = Image.open(screenshot_path)
         img_buffer = io.BytesIO()
         img.save(img_buffer, format='PNG')
@@ -1074,7 +1028,26 @@ Output ONLY valid JSON, no markdown:"""
         if action_history:
             history_str = "\nPrevious actions:\n"
             for i, action in enumerate(action_history[-5:]):  # Last 5 actions
-                history_str += f"  {i+1}. {action.get('action', 'unknown')}: {action.get('description', '')}\n"
+                action_desc = f"{action.get('action', 'unknown')}: {action.get('description', '')}"
+                # Add failure/warning markers
+                if action.get("_execution_failed"):
+                    action_desc += " [FAILED - " + action.get("_failure_reason", "unknown") + "]"
+                if action.get("_warning"):
+                    action_desc += " [WARNING - " + action.get("_warning", "") + "]"
+                history_str += f"  {i+1}. {action_desc}\n"
+        
+        # Add warning if we're stuck
+        if force_screenshot_analysis:
+            history_str += "\n⚠️ WARNING: System is stuck in a loop - same action repeated multiple times. UI may not have changed. Look at screenshot carefully!\n"
+        
+        # Check for repeated typing failures
+        typing_failures = [a for a in action_history[-5:] if 
+            a.get("action") == "type" and 
+            ("internvault" in a.get("description", "").lower()) and
+            (a.get("_execution_failed") or a.get("_warning") or not a.get("_execution_failed"))]
+        
+        if len(typing_failures) >= 2:
+            history_str += f"\n⚠️ CRITICAL: Typed 'InternVault' {len(typing_failures)} times but text not appearing - TYPING IS FAILING! Do NOT try typing again!\n"
         
         # CRITICAL: Check if Test 2 is complete - both "Meeting Notes" and "Daily Standup" are present
         # Do this check before main planning to catch completion and prevent loops
@@ -1139,8 +1112,14 @@ Android State Information:
 - Has Input Field (EditText): {android_state.get('has_edittext', False)}
 - Visible UI Text: {', '.join(android_state.get('ui_text', [])[:10])}
 """
-        
+
+        # Add loop warning to prompt if we're stuck
+        loop_warning = ""
+        if force_screenshot_analysis:
+            loop_warning = "\n\n⚠️ CRITICAL: The system is stuck in a loop (same action repeated multiple times). The UI state may not have changed. Look at the screenshot CAREFULLY to see what's actually on screen. Do NOT repeat the same action - try a different approach (BACK key, different button, etc.)."
+
         prompt = f"""You are a QA Planner agent for mobile app testing. You analyze screenshots AND Android state to decide the next action.
+{loop_warning}
 
 {state_str}
 
@@ -1211,36 +1190,187 @@ CRITICAL RULES:
 19. **FOR TEST 3 (Settings)**: After tapping settings icon, look for "Appearance" tab or menu item. DO NOT try to close settings - explore it to find Appearance. If you can't find Appearance, look for tabs, menu items, or swipe to see more options.
 20. If "Close" button is not found in settings, use BACK key (code 4) or look for Appearance tab directly
 
-Output ONLY valid JSON, no markdown, no code blocks:
+CRITICAL OUTPUT REQUIREMENTS:
+- Return ONLY a valid JSON object, nothing else
+- NO explanations, NO reasoning, NO markdown, NO code blocks
+- NO text before or after the JSON
+- Start with {{ and end with }}
+- Example: {{"action": "tap", "x": 100, "y": 200, "description": "Tap button"}}
+
+Return ONLY the JSON object now:
 """
         
-        # Call OpenAI Vision API
-        response = call_openai_with_retry(
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{img_data}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            temperature=0.1,
-            max_tokens=200
-        )
+        # Choose approach based on config
+        if OLLAMA_APPROACH == "two-model":
+            # TWO-MODEL APPROACH:
+            # Step 1: qwen3-vl:8b analyzes screenshot and describes what it sees
+            # Step 2: gpt-oss:120b-cloud uses the description to plan the action (better at JSON)
+            
+            print(f"  📸 Step 1: Analyzing screenshot with {OLLAMA_VISION_MODEL}...")
+            vision_prompt = f"""Look at this screenshot of the Obsidian mobile app and describe what you see in detail.
+
+Focus on:
+- What screen is currently shown?
+- What buttons, text, or UI elements are visible?
+- What is the current state of the app?
+- Are there any input fields, buttons, or interactive elements?
+
+Describe the screenshot clearly and concisely."""
+            
+            try:
+                screenshot_description = call_ollama_vision(
+                    prompt=vision_prompt,
+                    image_base64=img_data,
+                    temperature=0.1
+                )
+            except Exception as e:
+                print(f"  ❌ Vision model failed: {str(e)}")
+                return {"action": "FAIL", "reason": f"Vision model error: {str(e)}"}
+            
+            if not screenshot_description:
+                print(f"  ⚠️  Vision model returned empty description")
+                return {"action": "FAIL", "reason": "Empty description from vision model"}
+            
+            print(f"  ✓ Screenshot described ({len(screenshot_description)} chars)")
+            
+            # Step 2: Use text model to plan action based on description
+            print(f"  🧠 Step 2: Planning action with {OLLAMA_TEXT_MODEL}...")
+            
+            # Check for repeated typing failures
+            typing_failures = [a for a in action_history[-5:] if 
+                a.get("action") == "type" and 
+                ("internvault" in a.get("description", "").lower() or a.get("_execution_failed") or a.get("_warning"))]
+            
+            typing_failed_warning = ""
+            if len(typing_failures) >= 2:
+                typing_failed_warning = "\n\n⚠️ CRITICAL: Typing 'InternVault' has FAILED multiple times - the text is not appearing in the UI. DO NOT try typing again. Instead, look for a 'Create vault' button or other button to tap first. The screenshot description should show what buttons are actually visible."
+            
+            planning_prompt = f"""You are a QA Planner agent for mobile app testing. You decide the next action based on screenshot description and Android state.
+
+SCREENSHOT DESCRIPTION (from vision model):
+{screenshot_description}
+
+ANDROID STATE:
+{state_str}
+
+TEST GOAL: "{test_text}"
+{history_str}
+{loop_warning}
+{typing_failed_warning}
+
+Based on the screenshot description and Android state above, decide the next single action to progress toward the test goal.
+
+CRITICAL RULES:
+1. Use the screenshot description to understand what's visible on screen
+2. Use Android state to understand the current screen and available inputs
+3. Return EXACTLY ONE action as JSON - no explanations, no markdown
+4. If coordinates are unknown, use x=0, y=0 and the executor will find the element
+5. **IF typing has FAILED multiple times (see action history with [FAILED] or [WARNING]), DO NOT try typing again - look for buttons to tap instead**
+6. **If we're on welcome_setup screen, we probably need to tap 'Create vault' button FIRST before typing**
+5. **IF an action has FAILED multiple times (marked [FAILED]), DO NOT try that action again - try a completely different approach**
+6. **IF typing has failed, look for buttons to tap instead - don't keep trying to type**
+7. **Check the action history - if you see [FAILED] or [WARNING], that action is not working**
+
+Available actions (return EXACTLY ONE as JSON):
+- {{"action": "tap", "x": 100, "y": 200, "description": "Tap 'Create vault' button"}}
+- {{"action": "type", "text": "InternVault", "description": "Type vault name"}}
+- {{"action": "type", "text": "Meeting Notes", "target": "title", "description": "Type note title"}}
+- {{"action": "focus", "target": "body", "description": "Focus note body editor"}}
+- {{"action": "key", "code": 66, "description": "Press ENTER"}}  (66=ENTER, 4=BACK)
+- {{"action": "swipe", "x1": 100, "y1": 500, "x2": 100, "y2": 200, "description": "Swipe up"}}
+- {{"action": "wait", "seconds": 2, "description": "Wait for UI to load"}}
+- {{"action": "assert", "description": "Test goal achieved"}}
+- {{"action": "FAIL", "reason": "Element not found"}}
+
+IMPORTANT: Return ONLY the JSON object, nothing else. Start with {{ and end with }}.
+
+JSON action:"""
+            
+            try:
+                result_text = call_ollama_chat(
+                    messages=[
+                        {"role": "user", "content": planning_prompt}
+                    ],
+                    temperature=0.1
+                )
+            except Exception as e:
+                print(f"  ❌ Planning model failed: {str(e)}")
+                return {"action": "FAIL", "reason": f"Planning model error: {str(e)}"}
+            
+            if not result_text:
+                print(f"  ⚠️  Planning model returned empty response")
+                return {"action": "FAIL", "reason": "Empty response from planning model"}
+            
+            print(f"  ✓ Planning model responded (length: {len(result_text)} chars)")
+            
+            result_text = result_text.strip()
         
-        if not response or not response.choices or not response.choices[0].message.content:
-            return {"action": "FAIL", "reason": "Empty response from LLM"}
-        
-        result_text = response.choices[0].message.content.strip()
+        else:  # Single-model approach
+            # SINGLE-MODEL APPROACH:
+            # Vision model does both screenshot analysis and planning
+            print(f"  📸 Analyzing screenshot and planning with {OLLAMA_VISION_MODEL}...")
+            
+            # Check for repeated typing failures
+            typing_failures = [a for a in action_history[-5:] if 
+                a.get("action") == "type" and 
+                ("internvault" in a.get("description", "").lower() or a.get("_execution_failed") or a.get("_warning"))]
+            
+            typing_failed_warning = ""
+            if len(typing_failures) >= 2:
+                typing_failed_warning = "\n\n⚠️ CRITICAL: Typing 'InternVault' has FAILED multiple times - the text is not appearing in the UI. DO NOT try typing again. Instead, look for a 'Create vault' button or other button to tap first."
+            
+            single_model_prompt = f"""You are a QA Planner agent for mobile app testing. Analyze the screenshot and decide the next action.
+
+ANDROID STATE:
+{state_str}
+
+TEST GOAL: "{test_text}"
+{history_str}
+{loop_warning}
+{typing_failed_warning}
+
+Based on the screenshot and Android state above, decide the next single action to progress toward the test goal.
+
+CRITICAL RULES:
+1. Analyze the screenshot carefully to see what's visible
+2. Use Android state to understand the current screen and available inputs
+3. Return EXACTLY ONE action as JSON - no explanations, no markdown
+4. If coordinates are unknown, use x=0, y=0 and the executor will find the element
+5. **IF typing has FAILED multiple times (see action history with [FAILED] or [WARNING]), DO NOT try typing again - look for buttons to tap instead**
+6. **If we're on welcome_setup screen, we probably need to tap 'Create vault' button FIRST before typing**
+
+Available actions (return EXACTLY ONE as JSON):
+- {{"action": "tap", "x": 100, "y": 200, "description": "Tap 'Create vault' button"}}
+- {{"action": "type", "text": "InternVault", "description": "Type vault name"}}
+- {{"action": "type", "text": "Meeting Notes", "target": "title", "description": "Type note title"}}
+- {{"action": "focus", "target": "body", "description": "Focus note body editor"}}
+- {{"action": "key", "code": 66, "description": "Press ENTER"}}  (66=ENTER, 4=BACK)
+- {{"action": "swipe", "x1": 100, "y1": 500, "x2": 100, "y2": 200, "description": "Swipe up"}}
+- {{"action": "wait", "seconds": 2, "description": "Wait for UI to load"}}
+- {{"action": "assert", "description": "Test goal achieved"}}
+- {{"action": "FAIL", "reason": "Element not found"}}
+
+IMPORTANT: Return ONLY the JSON object, nothing else. Start with {{ and end with }}.
+
+JSON action:"""
+            
+            try:
+                result_text = call_ollama_vision(
+                    prompt=single_model_prompt,
+                    image_base64=img_data,
+                    temperature=0.1
+                )
+            except Exception as e:
+                print(f"  ❌ Vision model failed: {str(e)}")
+                return {"action": "FAIL", "reason": f"Vision model error: {str(e)}"}
+            
+            if not result_text:
+                print(f"  ⚠️  Vision model returned empty response")
+                return {"action": "FAIL", "reason": "Empty response from vision model"}
+            
+            print(f"  ✓ Vision model responded (length: {len(result_text)} chars)")
+            
+            result_text = result_text.strip()
         
         # Remove markdown code blocks if present
         if result_text.startswith("```json"):
@@ -1250,6 +1380,28 @@ Output ONLY valid JSON, no markdown, no code blocks:
         if result_text.endswith("```"):
             result_text = result_text[:-3]
         result_text = result_text.strip()
+        
+        # Extract JSON from text if model added explanation (qwen3-vl sometimes does this)
+        # Look for JSON object pattern: {...}
+        import re
+        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*"action"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', result_text, re.DOTALL)
+        if json_match:
+            extracted = json_match.group(0)
+            if extracted != result_text:
+                print(f"  📝 Extracted JSON from response (model added explanation)")
+                result_text = extracted
+        elif "{" in result_text and "}" in result_text and '"action"' in result_text:
+            # Try to find the JSON object boundaries more carefully
+            start_idx = result_text.find('{"action"')
+            if start_idx == -1:
+                start_idx = result_text.find("{")
+            end_idx = result_text.rfind("}")
+            if start_idx < end_idx:
+                potential_json = result_text[start_idx:end_idx+1]
+                # Validate it has "action" key
+                if '"action"' in potential_json:
+                    result_text = potential_json
+                    print(f"  📝 Extracted JSON object from response")
         
         try:
             action = json.loads(result_text)
