@@ -303,8 +303,22 @@ def execute_action(action):
                                 verified = True
                             else:
                                 print(f"  ⚠️  Still not verified: '{text}' may not be entered correctly")
+                                # Mark as failed - text not entered
+                                return {
+                                    "status": "failed",
+                                    "reason": f"Text '{text}' not appearing in UI after multiple attempts",
+                                    "action": action,
+                                    "screenshot": take_screenshot(f"after_action_{int(time.time())}.png")
+                                }
             except Exception as e:
                 print(f"  ⚠️  Verification failed: {e}")
+                # If verification fails, still return executed but mark as potentially failed
+                return {
+                    "status": "executed",
+                    "action": action,
+                    "screenshot": take_screenshot(f"after_action_{int(time.time())}.png"),
+                    "warning": f"Could not verify text entry: {e}"
+                }
             
         elif action_type == "key":
             code = action.get("code", 0)
