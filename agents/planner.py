@@ -452,19 +452,25 @@ Output ONLY valid JSON, no markdown:"""
                     a.get("action", "").lower() == "type" and "internvault" in a.get("description", "").lower()]
                 
                 if recent_type_actions:
-                    # We've typed InternVault recently - analyze screenshot to find Create vault button
+                    # We've typed InternVault recently - MUST press ENTER or tap Create vault button
                     if "internvault" in ui_text_lower:
-                        # Name is visible - analyze screenshot to find Create vault button
-                        print(f"  → Vault name 'InternVault' typed, analyzing screenshot to find 'Create vault' button...")
-                        # Use screenshot analysis to find the button (will be handled by main planning logic)
-                        # But first check if button text is in UI
-                        if "create vault" in ui_text_lower or ("create" in ui_text_lower and "vault" in ui_text_lower):
-                            print(f"  → 'Create vault' button found in UI text, tapping it...")
+                        # Name is visible - check if we're still on welcome_setup (need to press ENTER or tap button)
+                        if current_screen == 'welcome_setup' or current_screen == 'vault_selection':
+                            # Check if button text is in UI
+                            if "create vault" in ui_text_lower or ("create" in ui_text_lower and "vault" in ui_text_lower):
+                                print(f"  → 'Create vault' button found in UI text, tapping it...")
+                                return {
+                                    "action": "tap",
+                                    "x": 0,
+                                    "y": 0,
+                                    "description": "Tap 'Create vault' button"
+                                }
+                            # Button not visible - press ENTER instead
+                            print(f"  → Vault name 'InternVault' typed, pressing ENTER to create vault...")
                             return {
-                                "action": "tap",
-                                "x": 0,
-                                "y": 0,
-                                "description": "Tap 'Create vault' button"
+                                "action": "key",
+                                "code": 66,
+                                "description": "Press ENTER after typing vault name"
                             }
                         # Button not in UI text - need to analyze screenshot to find it
                         # Continue to main planning which will analyze screenshot
@@ -1096,14 +1102,16 @@ Output ONLY valid JSON, no markdown:"""
             
             # Check if we have "Meeting Notes" in UI but not "Daily Standup"
             if has_meeting_notes and not has_daily_standup:
-                    # Need to focus body and type it
-                    if current_screen == 'note_editor':
-                        print(f"  → Have 'Meeting Notes' but not 'Daily Standup', focusing body field...")
-                        return {
-                            "action": "focus",
-                            "target": "body",
-                            "description": "Focus note body editor"
-                        }
+                # Need to focus body and type it
+                # Check if we're in note editor or if last action was typing Meeting Notes
+                if (current_screen == 'note_editor' or 
+                    (last_action.get("action") == "type" and "meeting notes" in last_action.get("description", "").lower())):
+                    print(f"  → Have 'Meeting Notes' but not 'Daily Standup', focusing body field FIRST...")
+                    return {
+                        "action": "focus",
+                        "target": "body",
+                        "description": "Focus note body editor"
+                    }
         
         # Build Android state string
         state_str = f"""
@@ -1267,9 +1275,22 @@ CRITICAL RULES:
 4. If coordinates are unknown, use x=0, y=0 and the executor will find the element
 5. **IF typing has FAILED multiple times (see action history with [FAILED] or [WARNING]), DO NOT try typing again - look for buttons to tap instead**
 6. **If we're on welcome_setup screen, we probably need to tap 'Create vault' button FIRST before typing**
-5. **IF an action has FAILED multiple times (marked [FAILED]), DO NOT try that action again - try a completely different approach**
-6. **IF typing has failed, look for buttons to tap instead - don't keep trying to type**
 7. **Check the action history - if you see [FAILED] or [WARNING], that action is not working**
+
+**CRITICAL FOR TEST 1 (Vault Creation):**
+- After typing "InternVault" as vault name, you MUST either:
+  * Press ENTER key: {{"action": "key", "code": 66, "description": "Press ENTER after typing vault name"}}, OR
+  * Tap "Create vault" button: {{"action": "tap", "x": 0, "y": 0, "description": "Tap 'Create vault' button"}}
+- DO NOT just type "InternVault" and stop - you MUST press ENTER or tap the button to create the vault
+
+**CRITICAL FOR TEST 2 (Note Creation with Title and Body):**
+- If "Meeting Notes" is already in the UI text (check screenshot description), you MUST focus the body field FIRST before typing "Daily Standup"
+- The correct sequence is:
+  1. Type "Meeting Notes" with target="title" (if not already present)
+  2. Focus body field: {{"action": "focus", "target": "body", "description": "Focus note body editor"}}
+  3. Type "Daily Standup" with target="body": {{"action": "type", "text": "Daily Standup", "target": "body", "description": "Type note body text"}}
+- DO NOT type "Daily Standup" without first focusing the body field - it will appear on the same line as the title!
+- If screenshot shows "Meeting Notes" is present but "Daily Standup" is not, you MUST focus body first, then type
 
 Available actions (return EXACTLY ONE as JSON):
 - {{"action": "tap", "x": 100, "y": 200, "description": "Tap 'Create vault' button"}}
