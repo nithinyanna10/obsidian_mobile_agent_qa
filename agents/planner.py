@@ -428,7 +428,7 @@ Output ONLY valid JSON, no markdown:"""
                 max_tokens=100
             )
             
-                    if scan_response and scan_response.choices and scan_response.choices[0].message.content:
+            if scan_response and scan_response.choices and scan_response.choices[0].message.content:
                     scan_result_text = scan_response.choices[0].message.content.strip()
                     # Remove markdown if present
                     if scan_result_text.startswith("```json"):
