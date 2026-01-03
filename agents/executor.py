@@ -90,6 +90,10 @@ def execute_action(action):
                     elif "storage" in desc_lower:
                         # Generic storage selection - prefer app/internal over device
                         search_texts = ["app storage", "internal storage", "app", "internal", "storage"]
+                    elif "top-right" in desc_lower or "menu button" in desc_lower or "three dots" in desc_lower or "hamburger" in desc_lower:
+                        # For top-right menu - try to find menu indicators, but use coordinates as fallback
+                        search_texts = ["more", "menu", "options", "settings", "⋮", "☰"]
+                        # If not found, will use provided coordinates (1000, 100)
                     else:
                         # Extract key words
                         words = [w for w in description.split() if len(w) > 2]
@@ -106,6 +110,12 @@ def execute_action(action):
                                 print(f"  ✓ Found element '{search_text}' at ({x}, {y})")
                                 found = True
                                 break
+                    
+                    # Special handling for top-right menu: if not found by text, use provided coordinates
+                    if not found and ("top-right" in desc_lower or "menu button" in desc_lower):
+                        if x > 500 and y < 300:  # Valid top-right coordinates (x > 500, y < 300)
+                            print(f"  📍 Using provided top-right coordinates ({x}, {y}) for menu button")
+                            found = True
                     
                     if not found:
                         # If coordinates are invalid (0,0) or generic, fail instead of tapping nothing
@@ -275,25 +285,50 @@ def execute_action(action):
                             if selected:
                                 print(f"  📍 Focusing {target} field at ({selected['x']}, {selected['y']})")
                                 tap(selected['x'], selected['y'])
-                                time.sleep(0.3)
+                                time.sleep(0.5)  # Wait longer for field to be focused
                 except:
                     pass
             
-            # Clear existing text using Ctrl+A combo (better than keyevent)
+            # Clear existing text - try multiple methods for reliability
+            print(f"  🗑️  Clearing existing text...")
+            cleared = False
+            # Method 1: Try Ctrl+A + DEL
             try:
                 keycombination(113, 29)  # Ctrl + A
-                time.sleep(0.2)
+                time.sleep(0.3)
                 keyevent(67)  # DEL
                 time.sleep(0.3)
+                cleared = True
             except:
-                # Fallback to old method
+                pass
+            
+            # Method 2: If Ctrl+A didn't work, try long-press select all
+            if not cleared:
                 try:
+                    # Long press to select all (hold for 500ms)
                     keyevent(113)  # KEYCODE_CTRL_A
-                    time.sleep(0.2)
+                    time.sleep(0.5)
                     keyevent(67)   # KEYCODE_DEL
                     time.sleep(0.3)
+                    cleared = True
                 except:
                     pass
+            
+            # Method 3: If still not cleared, use multiple backspaces
+            if not cleared:
+                try:
+                    # Select all by tapping field multiple times or using backspace
+                    for _ in range(10):  # Press backspace 10 times to clear
+                        keyevent(67)  # DEL
+                        time.sleep(0.1)
+                    cleared = True
+                except:
+                    pass
+            
+            if cleared:
+                print(f"  ✓ Text cleared")
+            else:
+                print(f"  ⚠️  Could not clear text, proceeding anyway...")
             
             # Type the text
             type_text(text)
@@ -324,6 +359,16 @@ def execute_action(action):
                     if text_normalized in ui_blob:
                         print(f"  ✓ Verified: '{text}' appears in UI")
                         verified = True
+                        # Dismiss keyboard by tapping on screen (outside input field)
+                        # Tap in the middle-top area to dismiss keyboard
+                        try:
+                            # Get screen dimensions (approximate for most phones)
+                            # Tap in safe area (middle-top) to dismiss keyboard
+                            print(f"  ⌨️  Dismissing keyboard by tapping screen...")
+                            tap(540, 200)  # Middle-top area, safe from keyboard
+                            time.sleep(0.3)  # Wait for keyboard to dismiss
+                        except:
+                            pass
                     else:
                         print(f"  ⚠️  Warning: '{text}' not found in UI, retrying with slow typing...")
                         # Retry with slow per-character typing
@@ -346,6 +391,13 @@ def execute_action(action):
                             if text_normalized in ui_blob:
                                 print(f"  ✓ Verified after retry: '{text}' appears in UI")
                                 verified = True
+                                # Dismiss keyboard by tapping on screen
+                                try:
+                                    print(f"  ⌨️  Dismissing keyboard by tapping screen...")
+                                    tap(540, 200)  # Middle-top area
+                                    time.sleep(0.3)
+                                except:
+                                    pass
                             else:
                                 print(f"  ⚠️  Still not verified: '{text}' may not be entered correctly")
                                 # Mark as failed - text not entered

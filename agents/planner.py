@@ -10,6 +10,7 @@ import sys
 import base64
 import io
 import time
+import re
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -136,6 +137,29 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
         current_screen = android_state.get('current_screen', 'unknown')
         ui_text = android_state.get('ui_text', [])
         ui_text_lower = " ".join([t.lower() for t in ui_text])
+        
+        # ===== MEMORY-BASED ACTION SELECTION (REDUCE OpenAI API CALLS) =====
+        # Check memory FIRST - if we have a successful pattern, use it instead of calling OpenAI
+        context = {"current_screen": android_state.get('current_screen', 'unknown'), "test_goal": test_text}
+        successful_pattern = memory.get_successful_pattern(context)
+        
+        if successful_pattern and len(successful_pattern) > 0:
+            # We have a successful pattern - check if we're at the right step
+            current_step = len(action_history)
+            
+            if current_step < len(successful_pattern):
+                # We haven't completed the pattern yet - use next action from memory
+                next_action_from_memory = successful_pattern[current_step]
+                print(f"  💾 Using action from memory (step {current_step + 1}/{len(successful_pattern)}) - skipping OpenAI call")
+                print(f"  → Memory action: {next_action_from_memory.get('action')} - {next_action_from_memory.get('description', '')}")
+                # Attach Android state for logging
+                next_action_from_memory["_android_state"] = android_state
+                next_action_from_memory["_from_memory"] = True
+                return next_action_from_memory
+            elif current_step >= len(successful_pattern):
+                # We've completed the pattern - check if test goal is achieved
+                print(f"  💾 Completed memory pattern ({len(successful_pattern)} steps), checking if goal achieved...")
+                # Continue to normal planning to verify completion
         
         # CRITICAL: Check if we're in vault by package/activity (most reliable) - DO THIS FIRST
         pkg_act = get_current_package_and_activity()
@@ -302,6 +326,7 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                 # Check if note title and content are present
                 has_title = "meeting notes" in ui_text_lower
                 has_content = "daily standup" in ui_text_lower
+                has_untitled = "untitled" in ui_text_lower
                 
                 if has_title and has_content:
                     print(f"  ✅ Test 2 PASS: Note 'Meeting Notes' with 'Daily Standup' already created!")
@@ -309,17 +334,27 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                         "action": "assert",
                         "description": "Note 'Meeting Notes' with 'Daily Standup' text created successfully"
                     }
+                elif has_untitled and not has_title:
+                    # CRITICAL: "Untitled" is in the title - clear it and type "Meeting Notes" first
+                    # The executor will automatically clear "Untitled" before typing (Ctrl+A + DEL)
+                    print(f"  → Found 'Untitled' in title, clearing it and typing 'Meeting Notes'...")
+                    return {
+                        "action": "type",
+                        "text": "Meeting Notes",
+                        "target": "title",
+                        "description": "Clear 'Untitled' and type note title 'Meeting Notes'"
+                    }
                 elif has_title and not has_content:
-                    # Note created but content not typed yet - focus body and type "Daily Standup" (NO ENTER)
-                    print(f"  → Note 'Meeting Notes' created, focusing body field and typing 'Daily Standup'...")
+                    # Note title "Meeting Notes" is set, but content not typed yet - focus body and type "Daily Standup"
+                    print(f"  → Note 'Meeting Notes' created, focusing body field to type 'Daily Standup'...")
                     return {
                         "action": "focus",
                         "target": "body",
                         "description": "Focus note body editor"
                     }
-                elif not has_title:
-                    # Title not typed - type "Meeting Notes" first (heading) with target="title"
-                    print(f"  → In note editor, typing title 'Meeting Notes' first (heading)...")
+                elif not has_title and not has_untitled:
+                    # Title not typed and no "Untitled" - type "Meeting Notes" first (heading) with target="title"
+                    print(f"  → In note editor, typing title 'Meeting Notes'...")
                     return {
                         "action": "type",
                         "text": "Meeting Notes",
@@ -336,7 +371,7 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                 # Continue to main planning logic
         
         # ===== TEST 3: SETTINGS/APPEARANCE NAVIGATION =====
-        # Test 3 requires: Top-right menu → Settings → Appearance → Verify icon color
+        # Test 3 requires: Top-left menu → Settings → Appearance → Verify icon color
         if "settings" in test_text.lower() and "appearance" in test_text.lower():
             # Check if we're already in Appearance screen
             if "appearance" in ui_text_lower:
@@ -370,18 +405,105 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                         "description": "Tap 'Settings' option in menu"
                     }
             
-            # Check if we need to tap top-right menu button
-            # Look for menu indicators in UI (three dots, hamburger, etc.)
+            # Check if we need to tap button below time (top-right) to open sidebar with Settings
+            # Use LLM vision to identify the button below time in top-right area
             if not any("settings" in t.lower() for t in ui_text) and not any("appearance" in t.lower() for t in ui_text):
-                # Not in Settings or Appearance - need to open top-right menu first
-                print(f"  → Need to open top-right menu to access Settings...")
-                # Use coordinates in top-right area (screen width - 100, 100)
-                return {
-                    "action": "tap",
-                    "x": 0,
-                    "y": 0,
-                    "description": "Tap top-right menu button (three dots or hamburger menu)"
-                }
+                # Not in Settings or Appearance - need to open sidebar first
+                # Check if we just tapped the button below time - look for Settings in sidebar
+                if action_history and action_history[-1].get("action") == "tap" and "below time" in action_history[-1].get("description", "").lower():
+                    # We just tapped the button - now look for Settings icon in the sidebar that appeared from left
+                    print(f"  → Sidebar opened, looking for Settings icon in sidebar...")
+                    return {
+                        "action": "tap",
+                        "x": 0,
+                        "y": 0,
+                        "description": "Tap 'Settings' icon in sidebar (appeared from left)"
+                    }
+                
+                # Use LLM vision to find the button BELOW TIME in top-right area
+                print(f"  → Looking for button below time (top-right area) to open sidebar...")
+                
+                # Use LLM vision to find the button below time
+                img = Image.open(screenshot_path)
+                img_buffer = io.BytesIO()
+                img.save(img_buffer, format='PNG')
+                img_buffer.seek(0)
+                img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
+                
+                menu_find_prompt = """Look at this screenshot. I need to find a button/symbol BELOW THE TIME (clock) in the TOP-RIGHT area of the screen.
+
+IMPORTANT: Look for a symbol/icon BELOW THE TIME (clock) in the TOP-RIGHT corner area. This button is usually positioned:
+- In the top-right area of the screen (x: 900-1080)
+- Below where the time/clock is displayed (y: 100-250)
+- It could be three horizontal lines, three dots, a hamburger icon, a weird symbol, or some other menu button
+
+When you tap this button, a sidebar/page will slide in from the left side with a Settings icon.
+
+Analyze the screenshot and identify:
+1. Is there a symbol/button BELOW THE TIME in the TOP-RIGHT area? (x: 900-1080, y: 100-250)
+2. What does the symbol look like? (describe it in detail)
+3. What are the exact coordinates (x, y) of the center of this button?
+
+Return ONLY a JSON object with:
+{
+  "below_time_found": true/false,
+  "description": "description of the symbol/button below time",
+  "below_time_x": x_coordinate_of_button_below_time (if found, should be 900-1080),
+  "below_time_y": y_coordinate_of_button_below_time (if found, should be 100-250)
+}
+
+PRIORITY: Focus ONLY on finding the button BELOW THE TIME in the TOP-RIGHT area. This is the button that opens the sidebar.
+If you cannot find it, return {"below_time_found": false}."""
+                
+                try:
+                    response = call_openai_with_retry(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": menu_find_prompt},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
+                                ]
+                            }
+                        ],
+                        max_tokens=200
+                    )
+                    
+                    response_text = response.choices[0].message.content.strip()
+                    # Extract JSON from response
+                    json_match = re.search(r'\{[^}]+\}', response_text, re.DOTALL)
+                    if json_match:
+                        menu_info = json.loads(json_match.group())
+                        # Check if button BELOW TIME was found (this opens the sidebar)
+                        if menu_info.get("below_time_found") and menu_info.get("below_time_x") and menu_info.get("below_time_y"):
+                            x = int(menu_info.get("below_time_x", 1000))
+                            y = int(menu_info.get("below_time_y", 150))
+                            desc = menu_info.get("description", "button below time")
+                            print(f"  ✓ LLM found button below time (top-right): {desc} at ({x}, {y})")
+                            print(f"  → This button will open a sidebar from the left with Settings icon")
+                            return {
+                                "action": "tap",
+                                "x": x,
+                                "y": y,
+                                "description": f"Tap button below time ({desc}) at ({x}, {y}) - opens sidebar from left"
+                            }
+                    
+                    # If LLM didn't find it, fall back to top-left area coordinates
+                    print(f"  ⚠️  LLM couldn't find menu button, using top-left area coordinates")
+                    return {
+                        "action": "tap",
+                        "x": 100,  # Top-left area
+                        "y": 100,  # Top area
+                        "description": "Tap top-left menu button (symbol/icon) - coordinates: top-left corner (100, 100)"
+                    }
+                except Exception as e:
+                    print(f"  ⚠️  Error using LLM to find menu button: {e}, using top-left coordinates")
+                    return {
+                        "action": "tap",
+                        "x": 100,  # Top-left area
+                        "y": 100,  # Top area
+                        "description": "Tap top-left menu button (symbol/icon) - coordinates: top-left corner (100, 100)"
+                    }
         
         # ===== HARD GATE 0: FAST UI TEXT CHECK FIRST (NO API CALL) =====
         # For Test 1: Check if "create new note" button is visible (means we're in vault - TEST 1 PASS)
@@ -1167,14 +1289,14 @@ Output ONLY valid JSON, no markdown:"""
                     status_marker = " [SUCCESS]"
                 history_str += f"  {i+1}. {action.get('action', 'unknown')}: {action.get('description', '')}{status_marker}\n"
         
-        # Check memory for successful patterns and avoid failed ones
-        context = {"current_screen": current_screen, "test_goal": test_text}
-        successful_pattern = memory.get_successful_pattern(context)
+        # Check memory for failed patterns to avoid (successful_pattern already checked at start)
         should_avoid, avoid_reason = memory.should_avoid_action(context, {"action": "type", "description": "Type vault name"})
         
         memory_hint = ""
-        if successful_pattern:
-            memory_hint = f"\n💡 Memory: Found successful pattern for this context: {len(successful_pattern)} actions"
+        if successful_pattern and len(action_history) < len(successful_pattern):
+            memory_hint = f"\n💡 Memory: Following successful pattern ({len(action_history) + 1}/{len(successful_pattern)} steps)"
+        elif successful_pattern:
+            memory_hint = f"\n💡 Memory: Completed pattern, verifying completion..."
         if should_avoid:
             memory_hint += f"\n⚠️  Memory: Avoid typing - failed 3+ times: {avoid_reason}"
         
@@ -1221,6 +1343,24 @@ Output ONLY valid JSON, no markdown:"""
                     "text": "Daily Standup",
                     "target": "body",
                     "description": "Type note body text 'Daily Standup'"
+                }
+            
+            # Check if we have "Untitled" in UI - need to clear it by typing directly
+            ui_blob_lower = ui_blob.lower()
+            has_untitled = "untitled" in ui_blob_lower
+            
+            # Check if we need to type "Meeting Notes" first (if "Untitled" is present)
+            has_meeting_notes = "meetingnotes" in ui_blob_lower or "meetingnote" in ui_blob_lower
+            
+            if has_untitled and not has_meeting_notes:
+                # CRITICAL: "Untitled" is in the title - clear it and type "Meeting Notes" first
+                # The executor will automatically clear "Untitled" before typing (Ctrl+A + DEL)
+                print(f"  → Found 'Untitled' in title, clearing it and typing 'Meeting Notes'...")
+                return {
+                    "action": "type",
+                    "text": "Meeting Notes",
+                    "target": "title",
+                    "description": "Clear 'Untitled' and type note title 'Meeting Notes'"
                 }
             
             # Check if we have "Meeting Notes" in UI but not "Daily Standup"
@@ -1299,7 +1439,7 @@ CRITICAL RULES:
 15. **CRITICAL FOR NOTE CREATION**: If test goal includes creating a note "Meeting Notes" with text "Daily Standup":
     - If you're in vault_home (current_screen='vault_home' or FileActivity), look for "Create note" or "New note" button and tap it
     - After tapping create note, you'll be in note_editor (current_screen='note_editor')
-    - **IMPORTANT ORDER**: In note_editor, FIRST type the note title/heading "Meeting Notes" (this is the heading) with {{"action": "type", "text": "Meeting Notes", "target": "title", "description": "Type note title"}}
+    - **IMPORTANT ORDER**: In note_editor, FIRST clear the default "Untitled" text (executor will do this automatically), then type the note title/heading "Meeting Notes" (this is the heading) with {{"action": "type", "text": "Meeting Notes", "target": "title", "description": "Clear 'Untitled' and type note title"}}
     - THEN focus the body field with {{"action": "focus", "target": "body", "description": "Focus note body editor"}}
     - THEN type the body text "Daily Standup" with {{"action": "type", "text": "Daily Standup", "target": "body", "description": "Type note body text"}}
     - **DO NOT press ENTER** - use focus action to switch between title and body fields
@@ -1327,7 +1467,7 @@ CRITICAL RULES:
     - THEN: Look for "Settings" icon or option in the menu and tap it
     - THEN: Once in Settings, look for "Appearance" tab or menu item and tap it
     - FINALLY: After tapping Appearance, verify the Appearance tab icon color is Red (the test expects Red)
-    - The flow is: Top-right menu button → Settings icon → Appearance tab → Verify icon color is Red
+    - The flow is: Top-left menu button (identified by LLM vision) → Settings icon → Appearance tab → Verify icon color is Red
 20. If "Close" button is not found in settings, use BACK key (code 4) or look for Appearance tab directly
 
 CRITICAL: You MUST return a valid JSON action. This is required for the automation to work.

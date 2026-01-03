@@ -55,6 +55,114 @@
         "outcome": "Test 1 passed",
         "timestamp": "2026-01-03T00:02:14.253822",
         "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "type",
+            "description": "Type vault name",
+            "text": "InternVault"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap InternVault to enter existing vault (vault already created, stop creating new ones)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'InternVault' to enter existing vault",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'InternVault' to enter existing vault",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "outcome": "Test 1 passed",
+        "timestamp": "2026-01-03T00:18:43.841632",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "type",
+            "description": "Type vault name",
+            "text": "InternVault"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "outcome": "Test 1 passed",
+        "timestamp": "2026-01-03T18:49:28.256125",
+        "count": 5
       }
     ],
     "test_complete:create a new note titled 'meeting notes' and type ": [
@@ -85,8 +193,8 @@
           }
         ],
         "outcome": "Test 2 passed",
-        "timestamp": "2026-01-03T00:03:32.282214",
-        "count": 1
+        "timestamp": "2026-01-03T18:50:51.377670",
+        "count": 6
       }
     ],
     "test_complete:go to settings and verify that the 'appearance' ta": [
@@ -160,14 +268,222 @@
         "timestamp": "2026-01-03T00:00:52.440553",
         "count": 1
       }
+    ],
+    "unknown:go to settings and verify that the 'appearance' ta": [
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap top-right menu button (three dots or hamburger menu)' and no valid coordinates provided",
+        "timestamp": "2026-01-03T00:20:24.928354",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap top-right menu button (three dots or hamburger menu)' and no valid coordinates provided",
+        "timestamp": "2026-01-03T00:20:40.899081",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap top-right menu button (three dots or hamburger menu)' and no valid coordinates provided",
+        "timestamp": "2026-01-03T00:20:56.667581",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap top-right menu button (three dots or hamburger menu)' and no valid coordinates provided",
+        "timestamp": "2026-01-03T00:21:12.380099",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap top-right menu button (three dots or hamburger menu)' and no valid coordinates provided",
+        "timestamp": "2026-01-03T00:21:28.154524",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap top-right menu button (three dots or hamburger menu)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap top-right menu button (three dots or hamburger menu)' and no valid coordinates provided",
+        "timestamp": "2026-01-03T00:21:44.118205",
+        "count": 1
+      }
+    ],
+    "test_complete:open obsidian, create a new vault named 'internvau": [
+      {
+        "actions": [],
+        "reason": "Test 1 unexpected result: ERROR",
+        "timestamp": "2026-01-03T00:40:06.358430",
+        "count": 1
+      }
+    ],
+    "test_complete:create a new note titled 'meeting notes' and type ": [
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Create note' or 'New note' button to create new note",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "focus",
+            "description": "Focus note body editor to clear 'Untitled' text",
+            "target": "body"
+          },
+          {
+            "action": "focus",
+            "description": "Focus note body editor to clear 'Untitled' text",
+            "target": "body"
+          },
+          {
+            "action": "focus",
+            "description": "Focus note body editor to clear 'Untitled' text",
+            "target": "body"
+          }
+        ],
+        "reason": "Test 2 unexpected result: FAIL",
+        "timestamp": "2026-01-03T00:43:38.614482",
+        "count": 1
+      }
     ]
   },
   "action_rewards": {
-    "type": 0.03597500000000001,
-    "open_app": 0.020000000000000004,
-    "tap": 0.09371180000000001,
+    "type": 0.16960583635235776,
+    "open_app": 0.10434062000000002,
+    "tap": 0.1722662671965849,
     "key": 0.020000000000000004,
-    "focus": 0.020000000000000004
+    "focus": 0.09371180000000001
   },
-  "last_updated": "2026-01-03T00:05:13.663745"
+  "last_updated": "2026-01-03T18:50:51.382118"
 }
