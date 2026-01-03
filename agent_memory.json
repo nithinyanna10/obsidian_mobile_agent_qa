@@ -4,34 +4,170 @@
       {
         "actions": [
           {
-            "action": "open_app",
-            "app": "md.obsidian",
-            "_android_state": {
-              "current_screen": "vault_selection",
-              "ui_text": [
-                "content",
-                "launcher",
-                "drag_layer",
-                "scrim_view",
-                "workspace",
-                "search_container_workspace",
-                "bc_smartspace_view",
-                "smartspace_card_pager",
-                "text_group",
-                "Fri, Jan 2",
-                "date",
-                "smartspace_subtitle_group",
-                "Play Store",
-                "Gmail",
-                "Photos",
-                "YouTube",
-                "Home",
-                "page_indicator",
-                "hotseat",
-                "Phone"
-              ],
-              "has_edittext": false
-            },
-            "_execution_result": {
-              "status": "executed",
-              "action": 
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "type",
+            "description": "Type vault name",
+            "text": "InternVault"
+          },
+          {
+            "action": "type",
+            "description": "Type vault name",
+            "text": "InternVault"
+          },
+          {
+            "action": "tap",
+            "description": "Tap InternVault to enter existing vault (vault already created, stop creating new ones)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "key",
+            "description": "Press ENTER",
+            "code": 66
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "outcome": "Test 1 passed",
+        "timestamp": "2026-01-03T00:02:14.253822",
+        "count": 1
+      }
+    ],
+    "test_complete:create a new note titled 'meeting notes' and type ": [
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Create note' or 'New note' button to create new note",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "type",
+            "description": "Type note title",
+            "text": "Meeting Notes",
+            "target": "title"
+          },
+          {
+            "action": "focus",
+            "description": "Focus note body editor",
+            "target": "body"
+          },
+          {
+            "action": "type",
+            "description": "Type note body text 'Daily Standup'",
+            "text": "Daily Standup",
+            "target": "body"
+          }
+        ],
+        "outcome": "Test 2 passed",
+        "timestamp": "2026-01-03T00:03:32.282214",
+        "count": 1
+      }
+    ],
+    "test_complete:go to settings and verify that the 'appearance' ta": [
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'More options' to access settings",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'More options' to access settings",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'More options' to access settings",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "outcome": "Test 3 correctly failed",
+        "timestamp": "2026-01-03T00:04:59.776614",
+        "count": 1
+      }
+    ],
+    "test_complete:find and click the 'print to pdf' button in the ma": [
+      {
+        "actions": [],
+        "outcome": "Test 4 correctly failed",
+        "timestamp": "2026-01-03T00:05:13.663732",
+        "count": 1
+      }
+    ]
+  },
+  "failed_patterns": {
+    "welcome_setup:open obsidian, create a new vault named 'internvau": [
+      {
+        "actions": [
+          {
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "type",
+            "description": "Type vault name",
+            "text": "InternVault"
+          }
+        ],
+        "reason": "Text 'InternVault' not appearing in UI after multiple attempts",
+        "timestamp": "2026-01-03T00:00:52.440553",
+        "count": 1
+      }
+    ]
+  },
+  "action_rewards": {
+    "type": 0.03597500000000001,
+    "open_app": 0.020000000000000004,
+    "tap": 0.09371180000000001,
+    "key": 0.020000000000000004,
+    "focus": 0.020000000000000004
+  },
+  "last_updated": "2026-01-03T00:05:13.663745"
+}

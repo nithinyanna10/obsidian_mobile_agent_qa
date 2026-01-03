@@ -1273,7 +1273,13 @@ CRITICAL RULES:
     - After pressing ENTER or tapping button, wait for vault to be created (check if screen changed to vault_home)
 17. **CRITICAL FOR VAULT**: If you're on welcome_setup/vault_selection screen and the test goal is to create a note, the vault ALREADY EXISTS. DO NOT create a new vault. Look for the vault name "InternVault" in the UI and tap it to ENTER the existing vault. If you see "USE THIS FOLDER" button, you can tap that too.
 18. If you've typed vault name or created vault multiple times, STOP creating vaults and just enter the existing vault by tapping "InternVault" or "USE THIS FOLDER"
-19. **FOR TEST 3 (Settings)**: After tapping settings icon, look for "Appearance" tab or menu item. DO NOT try to close settings - explore it to find Appearance. If you can't find Appearance, look for tabs, menu items, or swipe to see more options.
+19. **FOR TEST 3 (Settings/Appearance)**: The correct flow is:
+    - FIRST: Look for a menu button in the top-right corner of the screen (usually three dots or hamburger menu)
+    - Tap the top-right menu button to open the menu
+    - THEN: Look for "Settings" icon or option in the menu and tap it
+    - THEN: Once in Settings, look for "Appearance" tab or menu item and tap it
+    - FINALLY: After tapping Appearance, verify the Appearance tab icon color is Red (the test expects Red)
+    - The flow is: Top-right menu button → Settings icon → Appearance tab → Verify icon color is Red
 20. If "Close" button is not found in settings, use BACK key (code 4) or look for Appearance tab directly
 
 CRITICAL: You MUST return a valid JSON action. This is required for the automation to work.

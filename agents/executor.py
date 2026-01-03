@@ -187,7 +187,52 @@ def execute_action(action):
             target = action.get("target", "")  # "title" or "body"
             print(f"  ⌨️  Type: {description} - '{text}' (target: {target})")
             
-            # If target is specified, focus that field first
+            # ALWAYS tap input field first to ensure keyboard appears
+            # This is critical for vault name input and other text fields
+            try:
+                root = dump_ui()
+                if root:
+                    edittexts = []
+                    for node in root.iter("node"):
+                        class_name = node.attrib.get("class", "").lower()
+                        if "edittext" in class_name:
+                            bounds = node.attrib.get("bounds")
+                            if bounds and bounds != "[0,0][0,0]":
+                                try:
+                                    b = bounds.replace("[", "").replace("]", ",").split(",")
+                                    x1, y1, x2, y2 = map(int, b[:4])
+                                    center_x = (x1 + x2) // 2
+                                    center_y = (y1 + y2) // 2
+                                    width = x2 - x1
+                                    height = y2 - y1
+                                    area = width * height
+                                    edittexts.append({
+                                        "x": center_x,
+                                        "y": center_y,
+                                        "y1": y1,
+                                        "area": area
+                                    })
+                                except:
+                                    continue
+                    
+                    if edittexts:
+                        selected = None
+                        if target == "title":
+                            selected = min(edittexts, key=lambda e: e["y1"])
+                        elif target == "body":
+                            selected = max(edittexts, key=lambda e: (e["area"], e["y1"]))
+                        else:
+                            # No target specified - use the first/only EditText (for vault name, etc.)
+                            selected = edittexts[0]
+                        
+                        if selected:
+                            print(f"  📍 Tapping input field at ({selected['x']}, {selected['y']}) to show keyboard...")
+                            tap(selected['x'], selected['y'])
+                            time.sleep(0.5)  # Wait for keyboard to appear
+            except Exception as e:
+                print(f"  ⚠️  Could not find input field: {e}, proceeding anyway...")
+            
+            # If target is specified, also focus that specific field (for note editor)
             if target:
                 # Call focus action internally
                 focus_action = {"action": "focus", "target": target, "description": f"Focus {target} field"}
