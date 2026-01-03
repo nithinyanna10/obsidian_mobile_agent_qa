@@ -52,8 +52,11 @@ class AgentMemory:
         if context_key not in self.successful_patterns:
             self.successful_patterns[context_key] = []
         
+        # Clean action sequence to avoid circular references
+        cleaned_actions = self._clean_action_sequence(action_sequence)
+        
         pattern = {
-            "actions": action_sequence,
+            "actions": cleaned_actions,
             "outcome": outcome,
             "timestamp": datetime.now().isoformat(),
             "count": 1
@@ -76,8 +79,11 @@ class AgentMemory:
         if context_key not in self.failed_patterns:
             self.failed_patterns[context_key] = []
         
+        # Clean action sequence to avoid circular references
+        cleaned_actions = self._clean_action_sequence(action_sequence)
+        
         pattern = {
-            "actions": action_sequence,
+            "actions": cleaned_actions,
             "reason": reason,
             "timestamp": datetime.now().isoformat(),
             "count": 1
@@ -132,6 +138,25 @@ class AgentMemory:
         screen = context.get("current_screen", "unknown")
         test_goal = context.get("test_goal", "").lower()[:50]  # First 50 chars
         return f"{screen}:{test_goal}"
+    
+    def _clean_action_sequence(self, action_sequence):
+        """Clean action sequence to remove circular references and non-serializable data"""
+        cleaned = []
+        for action in action_sequence:
+            if isinstance(action, dict):
+                cleaned_action = {
+                    "action": action.get("action"),
+                    "description": action.get("description"),
+                    "text": action.get("text"),
+                    "target": action.get("target"),
+                    "x": action.get("x"),
+                    "y": action.get("y"),
+                    "code": action.get("code"),
+                }
+                # Remove None values
+                cleaned_action = {k: v for k, v in cleaned_action.items() if v is not None}
+                cleaned.append(cleaned_action)
+        return cleaned
     
     def _patterns_similar(self, pattern1, pattern2):
         """Check if two action patterns are similar"""

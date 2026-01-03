@@ -1,0 +1,37 @@
+{
+  "successful_patterns": {
+    "test_complete:open obsidian, create a new vault named 'internvau": [
+      {
+        "actions": [
+          {
+            "action": "open_app",
+            "app": "md.obsidian",
+            "_android_state": {
+              "current_screen": "vault_selection",
+              "ui_text": [
+                "content",
+                "launcher",
+                "drag_layer",
+                "scrim_view",
+                "workspace",
+                "search_container_workspace",
+                "bc_smartspace_view",
+                "smartspace_card_pager",
+                "text_group",
+                "Fri, Jan 2",
+                "date",
+                "smartspace_subtitle_group",
+                "Play Store",
+                "Gmail",
+                "Photos",
+                "YouTube",
+                "Home",
+                "page_indicator",
+                "hotseat",
+                "Phone"
+              ],
+              "has_edittext": false
+            },
+            "_execution_result": {
+              "status": "executed",
+              "action": 

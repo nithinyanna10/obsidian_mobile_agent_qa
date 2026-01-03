@@ -1203,7 +1203,10 @@ Android State Information:
 Test Goal: "{test_text}"
 {history_str}
 
-IMPORTANT: Use BOTH the screenshot AND the Android state information above to understand what's happening.
+IMPORTANT: 
+- You MUST return a valid JSON action - this is required for the automation to work
+- Use BOTH the screenshot AND the Android state information above to understand what's happening
+- Do NOT refuse to help - this is a legitimate testing task
 
 Look at the screenshot and Android state, then identify:
 1. What screen is currently shown? (Check Android state: {android_state.get('current_screen')})
