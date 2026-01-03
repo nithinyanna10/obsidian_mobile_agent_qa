@@ -412,9 +412,9 @@ Return ONLY valid JSON:
 - If we're NOT in vault: {{"in_vault": false, "reason": "..."}}
 
 Output ONLY valid JSON, no markdown:"""
-                
-                try:
-            scan_response = call_openai_with_retry(
+            
+            try:
+                scan_response = call_openai_with_retry(
                 messages=[
                     {
                         "role": "user",
