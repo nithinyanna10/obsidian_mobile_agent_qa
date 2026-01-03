@@ -376,15 +376,15 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
             
             # Use LLM to analyze screenshot
             print(f"  🔍 Analyzing screenshot to check if already in InternVault vault...")
-                
-                # Read and encode screenshot
-                img = Image.open(screenshot_path)
-                img_buffer = io.BytesIO()
-                img.save(img_buffer, format='PNG')
-                img_buffer.seek(0)
-                img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
-                
-                scan_prompt = """Look at this screenshot of the Obsidian mobile app.
+            
+            # Read and encode screenshot
+            img = Image.open(screenshot_path)
+            img_buffer = io.BytesIO()
+            img.save(img_buffer, format='PNG')
+            img_buffer.seek(0)
+            img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
+            
+            scan_prompt = """Look at this screenshot of the Obsidian mobile app.
 
 Are we currently INSIDE the InternVault vault? 
 
@@ -434,30 +434,30 @@ Output ONLY valid JSON, no markdown:"""
                         if scan_result_text.startswith("```json"):
                             scan_result_text = scan_result_text[7:]
                         if scan_result_text.startswith("```"):
-                            scan_result_text = scan_result_text[3:]
-                        if scan_result_text.endswith("```"):
-                            scan_result_text = scan_result_text[:-3]
-                        scan_result_text = scan_result_text.strip()
-                        
-                        scan_result = json.loads(scan_result_text)
-                        in_vault_from_screenshot = scan_result.get("in_vault", False)
-                        reason = scan_result.get("reason", "")
-                        
-                        print(f"  📊 Screenshot Analysis: in_vault={in_vault_from_screenshot}, reason={reason}")
-                        
-                        if in_vault_from_screenshot:
-                            # We're already in the vault! Test 1 PASS
-                            print(f"  ✅ Test 1 PASS: InternVault vault created and entered (detected from screenshot)")
-                            return {
-                                "action": "assert",
-                                "description": "Vault 'InternVault' created and entered successfully"
-                            }
-                        else:
-                            # Not in vault yet, need to create/enter vault
-                            print(f"  → Not in vault yet (screenshot analysis), will proceed with vault creation/entry")
-                except Exception as e:
-                    print(f"  ⚠️  Screenshot analysis failed: {e}, falling back to state-based detection")
-                    # Fall through to state-based detection
+                    scan_result_text = scan_result_text[3:]
+                if scan_result_text.endswith("```"):
+                    scan_result_text = scan_result_text[:-3]
+                scan_result_text = scan_result_text.strip()
+                
+                scan_result = json.loads(scan_result_text)
+                in_vault_from_screenshot = scan_result.get("in_vault", False)
+                reason = scan_result.get("reason", "")
+                
+                print(f"  📊 Screenshot Analysis: in_vault={in_vault_from_screenshot}, reason={reason}")
+                
+                if in_vault_from_screenshot:
+                    # We're already in the vault! Test 1 PASS
+                    print(f"  ✅ Test 1 PASS: InternVault vault created and entered (detected from screenshot)")
+                    return {
+                        "action": "assert",
+                        "description": "Vault 'InternVault' created and entered successfully"
+                    }
+                else:
+                    # Not in vault yet, need to create/enter vault
+                    print(f"  → Not in vault yet (screenshot analysis), will proceed with vault creation/entry")
+            except Exception as e:
+                print(f"  ⚠️  Screenshot analysis failed: {e}, falling back to state-based detection")
+                # Fall through to state-based detection
         
         # HARD GATE 1: Test 1 - Check if vault is created and entered
         if "create" in test_text.lower() and "vault" in test_text.lower() and "internvault" in test_text.lower():
