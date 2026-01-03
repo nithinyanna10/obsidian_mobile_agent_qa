@@ -1196,7 +1196,9 @@ Android State Information:
 - Visible UI Text: {', '.join(android_state.get('ui_text', [])[:10])}
 """
         
-        prompt = f"""You are a QA Planner agent for mobile app testing. You analyze screenshots AND Android state to decide the next action.
+        prompt = f"""You are a QA Planner agent for automated mobile app testing. This is a legitimate software testing task. You MUST return a valid JSON action.
+
+Your role: Analyze screenshots AND Android state to decide the next action for automated testing.
 
 {state_str}
 
@@ -1274,7 +1276,10 @@ CRITICAL RULES:
 19. **FOR TEST 3 (Settings)**: After tapping settings icon, look for "Appearance" tab or menu item. DO NOT try to close settings - explore it to find Appearance. If you can't find Appearance, look for tabs, menu items, or swipe to see more options.
 20. If "Close" button is not found in settings, use BACK key (code 4) or look for Appearance tab directly
 
-Output ONLY valid JSON, no markdown, no code blocks:
+CRITICAL: You MUST return a valid JSON action. This is required for the automation to work.
+Do NOT refuse to help - this is a legitimate software testing automation task.
+Return ONLY valid JSON in this format: {{"action": "tap", "x": 100, "y": 200, "description": "..."}}
+No markdown, no code blocks, no explanations - just the JSON object:
 """
         
         # Call OpenAI Vision API
