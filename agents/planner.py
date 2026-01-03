@@ -428,33 +428,33 @@ Output ONLY valid JSON, no markdown:"""
                 max_tokens=100
             )
             
-                if scan_response and scan_response.choices and scan_response.choices[0].message.content:
-                        scan_result_text = scan_response.choices[0].message.content.strip()
-                        # Remove markdown if present
-                        if scan_result_text.startswith("```json"):
-                            scan_result_text = scan_result_text[7:]
-                        if scan_result_text.startswith("```"):
-                    scan_result_text = scan_result_text[3:]
-                if scan_result_text.endswith("```"):
-                    scan_result_text = scan_result_text[:-3]
-                scan_result_text = scan_result_text.strip()
-                
-                scan_result = json.loads(scan_result_text)
-                in_vault_from_screenshot = scan_result.get("in_vault", False)
-                reason = scan_result.get("reason", "")
-                
-                print(f"  📊 Screenshot Analysis: in_vault={in_vault_from_screenshot}, reason={reason}")
-                
-                if in_vault_from_screenshot:
-                    # We're already in the vault! Test 1 PASS
-                    print(f"  ✅ Test 1 PASS: InternVault vault created and entered (detected from screenshot)")
-                    return {
-                        "action": "assert",
-                        "description": "Vault 'InternVault' created and entered successfully"
-                    }
-                else:
-                    # Not in vault yet, need to create/enter vault
-                    print(f"  → Not in vault yet (screenshot analysis), will proceed with vault creation/entry")
+                    if scan_response and scan_response.choices and scan_response.choices[0].message.content:
+                    scan_result_text = scan_response.choices[0].message.content.strip()
+                    # Remove markdown if present
+                    if scan_result_text.startswith("```json"):
+                        scan_result_text = scan_result_text[7:]
+                    if scan_result_text.startswith("```"):
+                        scan_result_text = scan_result_text[3:]
+                    if scan_result_text.endswith("```"):
+                        scan_result_text = scan_result_text[:-3]
+                    scan_result_text = scan_result_text.strip()
+                    
+                    scan_result = json.loads(scan_result_text)
+                    in_vault_from_screenshot = scan_result.get("in_vault", False)
+                    reason = scan_result.get("reason", "")
+                    
+                    print(f"  📊 Screenshot Analysis: in_vault={in_vault_from_screenshot}, reason={reason}")
+                    
+                    if in_vault_from_screenshot:
+                        # We're already in the vault! Test 1 PASS
+                        print(f"  ✅ Test 1 PASS: InternVault vault created and entered (detected from screenshot)")
+                        return {
+                            "action": "assert",
+                            "description": "Vault 'InternVault' created and entered successfully"
+                        }
+                    else:
+                        # Not in vault yet, need to create/enter vault
+                        print(f"  → Not in vault yet (screenshot analysis), will proceed with vault creation/entry")
             except Exception as e:
                 print(f"  ⚠️  Screenshot analysis failed: {e}, falling back to state-based detection")
                 # Fall through to state-based detection
