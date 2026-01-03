@@ -8,8 +8,7 @@ from agents.executor import execute_action
 from agents.supervisor import verify, compare_with_expected
 from tools.screenshot import ensure_screenshots_dir, take_screenshot
 from tools.adb_tools import reset_app
-from config import OBSIDIAN_PACKAGE, OLLAMA_BASE_URL
-from tools.ollama_client import check_ollama_connection
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE
 import time
 import os
 
@@ -25,14 +24,13 @@ def run_test_suite():
     # Ensure screenshots directory exists
     ensure_screenshots_dir()
     
-    # Check for Ollama connection
-    if not check_ollama_connection():
-        print("\n⚠️  WARNING: Ollama is not running or not accessible!")
-        print(f"Please ensure Ollama is running at {OLLAMA_BASE_URL}")
-        print("Start Ollama with: ollama serve")
+    # Check for API key
+    if not OPENAI_API_KEY or OPENAI_API_KEY == "YOUR_API_KEY_HERE":
+        print("\n⚠️  WARNING: OPENAI_API_KEY not configured!")
+        print("Please set it in config.py or as an environment variable")
         print("\nContinuing anyway...\n")
     else:
-        print(f"✓ Ollama connection verified\n")
+        print(f"✓ OpenAI API key configured\n")
     
     results = []
     previous_test_passed = False  # Track if previous test passed
@@ -94,23 +92,10 @@ def run_test_suite():
                 execution_result = execute_action(next_action)
                 
                 if execution_result["status"] == "failed":
-                    reason = execution_result.get('error', execution_result.get('reason', 'Unknown error'))
-                    print(f"❌ Execution failed: {reason}")
-                    # Add failed action to history with failure marker
-                    failed_action = next_action.copy()
-                    failed_action["_execution_failed"] = True
-                    failed_action["_failure_reason"] = reason
-                    action_history.append(failed_action)
-                    # Don't break - let planner try a different approach
-                    screenshot_path = execution_result.get("screenshot", screenshot_path)
-                    print(f"⚠️  Action failed, planner will try different approach\n")
-                    continue
-                
-                # Check for warnings (like text not verified)
-                if execution_result.get("warning"):
-                    print(f"⚠️  Warning: {execution_result.get('warning')}")
-                    # Mark action with warning
-                    next_action["_warning"] = execution_result.get("warning")
+                    print(f"❌ Execution failed: {execution_result.get('error', execution_result.get('reason', 'Unknown error'))}")
+                    test_result["status"] = "EXECUTION_ERROR"
+                    test_result["error"] = execution_result.get("error", execution_result.get("reason", "Unknown error"))
+                    break
                 
                 # Update screenshot and action history
                 screenshot_path = execution_result.get("screenshot", screenshot_path)

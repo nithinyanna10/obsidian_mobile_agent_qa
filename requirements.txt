@@ -1,6 +1,5 @@
-ollama>=0.1.0
+openai
 pillow
 opencv-python
 numpy
-requests
 
