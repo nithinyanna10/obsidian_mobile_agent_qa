@@ -1,0 +1,153 @@
+"""
+Memory and Learning System
+Stores successful action patterns and learns from outcomes
+"""
+import json
+import os
+from datetime import datetime
+from collections import defaultdict
+
+MEMORY_FILE = "agent_memory.json"
+
+class AgentMemory:
+    def __init__(self):
+        self.memory_file = MEMORY_FILE
+        self.memory = self._load_memory()
+        self.successful_patterns = self.memory.get("successful_patterns", {})
+        self.failed_patterns = self.memory.get("failed_patterns", {})
+        self.action_rewards = self.memory.get("action_rewards", defaultdict(float))
+        
+    def _load_memory(self):
+        """Load memory from file"""
+        if os.path.exists(self.memory_file):
+            try:
+                with open(self.memory_file, 'r') as f:
+                    return json.load(f)
+            except:
+                pass
+        return {
+            "successful_patterns": {},
+            "failed_patterns": {},
+            "action_rewards": {},
+            "last_updated": None
+        }
+    
+    def _save_memory(self):
+        """Save memory to file"""
+        self.memory["successful_patterns"] = self.successful_patterns
+        self.memory["failed_patterns"] = self.failed_patterns
+        self.memory["action_rewards"] = dict(self.action_rewards)
+        self.memory["last_updated"] = datetime.now().isoformat()
+        
+        try:
+            with open(self.memory_file, 'w') as f:
+                json.dump(self.memory, f, indent=2)
+        except Exception as e:
+            print(f"  ⚠️  Failed to save memory: {e}")
+    
+    def record_success(self, context, action_sequence, outcome):
+        """Record a successful action pattern"""
+        context_key = self._get_context_key(context)
+        
+        if context_key not in self.successful_patterns:
+            self.successful_patterns[context_key] = []
+        
+        pattern = {
+            "actions": action_sequence,
+            "outcome": outcome,
+            "timestamp": datetime.now().isoformat(),
+            "count": 1
+        }
+        
+        # Check if similar pattern exists
+        for existing in self.successful_patterns[context_key]:
+            if self._patterns_similar(existing["actions"], action_sequence):
+                existing["count"] += 1
+                existing["timestamp"] = datetime.now().isoformat()
+                return
+        
+        self.successful_patterns[context_key].append(pattern)
+        self._save_memory()
+    
+    def record_failure(self, context, action_sequence, reason):
+        """Record a failed action pattern"""
+        context_key = self._get_context_key(context)
+        
+        if context_key not in self.failed_patterns:
+            self.failed_patterns[context_key] = []
+        
+        pattern = {
+            "actions": action_sequence,
+            "reason": reason,
+            "timestamp": datetime.now().isoformat(),
+            "count": 1
+        }
+        
+        # Check if similar pattern exists
+        for existing in self.failed_patterns[context_key]:
+            if self._patterns_similar(existing["actions"], action_sequence):
+                existing["count"] += 1
+                existing["timestamp"] = datetime.now().isoformat()
+                return
+        
+        self.failed_patterns[context_key].append(pattern)
+        self._save_memory()
+    
+    def get_successful_pattern(self, context):
+        """Get a successful pattern for the given context"""
+        context_key = self._get_context_key(context)
+        
+        if context_key in self.successful_patterns:
+            patterns = self.successful_patterns[context_key]
+            if patterns:
+                # Return most recent and most used pattern
+                best = max(patterns, key=lambda p: (p["count"], p["timestamp"]))
+                return best["actions"]
+        
+        return None
+    
+    def should_avoid_action(self, context, action):
+        """Check if an action should be avoided based on past failures"""
+        context_key = self._get_context_key(context)
+        
+        if context_key in self.failed_patterns:
+            for pattern in self.failed_patterns[context_key]:
+                if pattern["count"] >= 3:  # Failed 3+ times
+                    if action in pattern["actions"]:
+                        return True, pattern["reason"]
+        
+        return False, None
+    
+    def update_reward(self, action_type, reward):
+        """Update reward for an action type (reinforcement learning)"""
+        self.action_rewards[action_type] = self.action_rewards.get(action_type, 0.0) * 0.9 + reward * 0.1
+        self._save_memory()
+    
+    def get_action_reward(self, action_type):
+        """Get reward score for an action type"""
+        return self.action_rewards.get(action_type, 0.0)
+    
+    def _get_context_key(self, context):
+        """Generate a key from context (screen, test goal, etc.)"""
+        screen = context.get("current_screen", "unknown")
+        test_goal = context.get("test_goal", "").lower()[:50]  # First 50 chars
+        return f"{screen}:{test_goal}"
+    
+    def _patterns_similar(self, pattern1, pattern2):
+        """Check if two action patterns are similar"""
+        if len(pattern1) != len(pattern2):
+            return False
+        
+        for a1, a2 in zip(pattern1, pattern2):
+            if a1.get("action") != a2.get("action"):
+                return False
+            # Allow some variation in coordinates
+            if a1.get("action") == "tap":
+                # Coordinates can vary
+                pass
+        
+        return True
+
+# Global memory instance
+memory = AgentMemory()
+

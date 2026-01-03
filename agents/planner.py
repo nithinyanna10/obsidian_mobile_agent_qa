@@ -15,6 +15,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL
 from tools.adb_tools import detect_current_screen, get_ui_text, dump_ui, get_current_package_and_activity
+from tools.memory import memory
 
 
 # Initialize OpenAI client
@@ -114,7 +115,7 @@ def get_android_state():
     return state
 
 
-def plan_next_action(test_text, screenshot_path, action_history, previous_test_passed=False):
+def plan_next_action(test_text, screenshot_path, action_history, previous_test_passed=False, execution_result=None):
     """
     Analyze screenshot + Android state and decide the next single action
     
@@ -366,19 +367,15 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                     "description": "Vault 'InternVault' created and entered successfully"
                 }
         
-        # ===== HARD GATE 0: SCREENSHOT-BASED VAULT DETECTION (FALLBACK - ONLY IF UNCLEAR) =====
-        # For Test 1: Only use screenshot analysis if state is unclear
-        # Skip if we're clearly in file picker or welcome screen (we're NOT in vault)
+        # ===== HARD GATE 0: SCREENSHOT-BASED VAULT DETECTION =====
+        # ALWAYS analyze screenshots - OpenAI vision needs to see the UI to make decisions
+        # Don't skip screenshot analysis - it's critical for understanding the current state
         if "create" in test_text.lower() and "vault" in test_text.lower() and "internvault" in test_text.lower():
-            # Skip screenshot analysis if we're clearly NOT in vault (file picker, welcome screen, etc.)
-            if current_screen in ['welcome_setup', 'vault_selection'] or \
-               any('file picker' in t.lower() or 'create vault' in t.lower() or 'use this folder' in t.lower() 
-                   for t in ui_text):
-                # We're clearly NOT in vault, skip expensive screenshot analysis
-                print(f"  → Not in vault (state-based: {current_screen}), skipping screenshot analysis")
-            else:
-                # State is unclear, use LLM to analyze screenshot
-                print(f"  🔍 Analyzing screenshot to check if already in InternVault vault...")
+            print(f"  📸 Analyzing screenshot (current screen: {current_screen})...")
+            force_screenshot_analysis = True
+            
+            # Use LLM to analyze screenshot
+            print(f"  🔍 Analyzing screenshot to check if already in InternVault vault...")
                 
                 # Read and encode screenshot
                 img = Image.open(screenshot_path)
@@ -486,25 +483,35 @@ Output ONLY valid JSON, no markdown:"""
                 
                 if just_typed_internvault:
                     # We just typed InternVault - MUST press ENTER or tap Create vault button IMMEDIATELY
+                    # Even if typing failed, we should still try to proceed
                     # Check if we're still on welcome_setup (need to press ENTER or tap button)
                     if current_screen == 'welcome_setup' or current_screen == 'vault_selection':
+                        # Check memory for successful patterns
+                        context = {"current_screen": current_screen, "test_goal": test_text}
+                        successful_pattern = memory.get_successful_pattern(context)
+                        
                         # ALWAYS prefer tapping "Create vault" button over ENTER (more reliable)
                         # Check if button text is in UI
                         if "create vault" in ui_text_lower or ("create" in ui_text_lower and "vault" in ui_text_lower):
                             print(f"  → Just typed 'InternVault', tapping 'Create vault' button...")
-                            return {
+                            action = {
                                 "action": "tap",
                                 "x": 0,
                                 "y": 0,
                                 "description": "Tap 'Create vault' button"
                             }
+                            # Record this pattern for learning
+                            memory.update_reward("tap_create_vault", 0.1)  # Positive reward
+                            return action
                         # Button not visible in UI text - try pressing ENTER
                         print(f"  → Just typed 'InternVault', pressing ENTER to create vault...")
-                        return {
+                        action = {
                             "action": "key",
                             "code": 66,
                             "description": "Press ENTER after typing vault name"
                         }
+                        memory.update_reward("key_enter_after_type", 0.1)  # Positive reward
+                        return action
                     # Not on welcome_setup - might have already created vault, continue to check
                     print(f"  → Just typed 'InternVault', but not on welcome_setup (current: {current_screen}), checking vault status...")
                     pass  # Continue to main planning logic
@@ -1100,12 +1107,28 @@ Output ONLY valid JSON, no markdown:"""
         img_buffer.seek(0)
         img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
         
-        # Build action history string
+        # Build action history string with execution status
         history_str = ""
         if action_history:
             history_str = "\nPrevious actions:\n"
             for i, action in enumerate(action_history[-5:]):  # Last 5 actions
-                history_str += f"  {i+1}. {action.get('action', 'unknown')}: {action.get('description', '')}\n"
+                status_marker = ""
+                if action.get("_execution_failed"):
+                    status_marker = " [FAILED]"
+                elif action.get("_execution_status") == "success":
+                    status_marker = " [SUCCESS]"
+                history_str += f"  {i+1}. {action.get('action', 'unknown')}: {action.get('description', '')}{status_marker}\n"
+        
+        # Check memory for successful patterns and avoid failed ones
+        context = {"current_screen": current_screen, "test_goal": test_text}
+        successful_pattern = memory.get_successful_pattern(context)
+        should_avoid, avoid_reason = memory.should_avoid_action(context, {"action": "type", "description": "Type vault name"})
+        
+        memory_hint = ""
+        if successful_pattern:
+            memory_hint = f"\n💡 Memory: Found successful pattern for this context: {len(successful_pattern)} actions"
+        if should_avoid:
+            memory_hint += f"\n⚠️  Memory: Avoid typing - failed 3+ times: {avoid_reason}"
         
         # CRITICAL: Check if Test 2 is complete - both "Meeting Notes" and "Daily Standup" are present
         # Do this check before main planning to catch completion and prevent loops
