@@ -371,7 +371,7 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                 # Continue to main planning logic
         
         # ===== TEST 3: SETTINGS/APPEARANCE NAVIGATION =====
-        # Test 3 requires: Top-left menu → Settings → Appearance → Verify icon color
+        # Test 3 requires: Button below time → Settings → Appearance → Verify icon color
         if "settings" in test_text.lower() and "appearance" in test_text.lower():
             # Check if we're already in Appearance screen
             if "appearance" in ui_text_lower:
@@ -382,10 +382,35 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                     "description": "Appearance tab opened, icon color verification will be done by supervisor"
                 }
             
-            # Check if we're in Settings screen
-            if "settings" in ui_text_lower and "appearance" not in ui_text_lower:
-                # In Settings but not in Appearance - tap Appearance
-                print(f"  → In Settings, tapping 'Appearance' tab...")
+            # CRITICAL: Check if we just tapped Settings icon - assume we're in Settings screen now
+            # This MUST be checked FIRST to prevent loop after tapping Settings
+            if action_history and len(action_history) > 0:
+                last_action = action_history[-1]
+                last_desc = last_action.get("description", "").lower()
+                if (last_action.get("action") == "tap" and 
+                    ("settings" in last_desc or "sidebar" in last_desc)):
+                    # We just tapped Settings - we should be in Settings screen now
+                    # Look for Appearance tab immediately
+                    print(f"  → Just tapped Settings (last action), now in Settings screen - looking for Appearance tab...")
+                    return {
+                        "action": "tap",
+                        "x": 0,
+                        "y": 0,
+                        "description": "Tap 'Appearance' tab in Settings"
+                    }
+            
+            # Check if we've tapped Settings in recent actions (state tracking)
+            # This catches cases where UI text doesn't show "settings" but we know we're in Settings
+            has_tapped_settings = any(
+                a.get("action") == "tap" and "settings" in a.get("description", "").lower()
+                for a in action_history[-5:]  # Check last 5 actions (more reliable)
+            )
+            
+            # If we've tapped Settings recently, assume we're in Settings screen
+            if has_tapped_settings and "appearance" not in ui_text_lower:
+                # We've tapped Settings before - we should be in Settings screen
+                # Look for Appearance tab
+                print(f"  → Previously tapped Settings, in Settings screen - looking for Appearance tab...")
                 return {
                     "action": "tap",
                     "x": 0,
@@ -393,37 +418,102 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                     "description": "Tap 'Appearance' tab in Settings"
                 }
             
-            # Check if we're in a menu (after tapping top-right button)
-            if "settings" in ui_text_lower or any("menu" in t.lower() for t in ui_text):
-                # Look for Settings option in menu
-                if "settings" in ui_text_lower:
-                    print(f"  → Found 'Settings' in menu, tapping it...")
-                    return {
-                        "action": "tap",
-                        "x": 0,
-                        "y": 0,
-                        "description": "Tap 'Settings' option in menu"
-                    }
+            # Check if we're in Settings screen (by UI text)
+            if "settings" in ui_text_lower and "appearance" not in ui_text_lower:
+                # In Settings but not in Appearance - tap Appearance
+                print(f"  → In Settings screen (detected by UI text), tapping 'Appearance' tab...")
+                return {
+                    "action": "tap",
+                    "x": 0,
+                    "y": 0,
+                    "description": "Tap 'Appearance' tab in Settings"
+                }
+            
+            # Check if we just opened sidebar - Settings should be found automatically by executor
+            # The executor's open_sidebar action handles finding and tapping Settings via LLM vision
+            if action_history and action_history[-1].get("action") == "open_sidebar":
+                # Sidebar was just opened - executor should have found and tapped Settings automatically
+                # Check execution result to see if Settings was tapped
+                if execution_result and execution_result.get("status") == "partial":
+                    # Settings was not found/tapped - try again using ratio coordinates
+                    print(f"  → Sidebar opened but Settings not tapped, trying ratio coordinates...")
+                    from tools.adb_tools import get_screen_size
+                    screen_size = get_screen_size()
+                    if screen_size:
+                        width, height = screen_size
+                        tap_x = int(width * 0.774)  # 77.4% from left
+                        tap_y = int(height * 0.102)  # 10.2% from top
+                        return {
+                            "action": "tap",
+                            "x": tap_x,
+                            "y": tap_y,
+                            "description": f"Tap Settings gear icon at ratio coordinates ({tap_x}, {tap_y})"
+                        }
+                    else:
+                        return {
+                            "action": "tap",
+                            "x": 540,  # Default coordinates
+                            "y": 154,
+                            "description": "Tap Settings gear icon at default coordinates (540, 154)"
+                        }
+                else:
+                    # Executor should have tapped Settings - check if we're in Settings screen
+                    # If we're in Settings, proceed to Appearance. If not, don't open sidebar again.
+                    if "settings" in ui_text_lower:
+                        print(f"  → In Settings screen after tapping Settings, looking for Appearance tab...")
+                        return {
+                            "action": "tap",
+                            "x": 0,
+                            "y": 0,
+                            "description": "Tap 'Appearance' tab in Settings"
+                        }
+                    else:
+                        # Not in Settings yet - wait a moment for screen to load
+                        print(f"  → Sidebar opened, waiting for Settings screen to load...")
+                        return {
+                            "action": "wait",
+                            "seconds": 1,
+                            "description": "Wait for Settings screen to load after tapping Settings"
+                        }
             
             # Check if we need to tap button below time (top-right) to open sidebar with Settings
-            # Use LLM vision to identify the button below time in top-right area
-            if not any("settings" in t.lower() for t in ui_text) and not any("appearance" in t.lower() for t in ui_text):
+            # Only if we haven't tapped it recently (prevent loop) AND we're not already in Settings
+            recent_below_time_taps = [
+                a for a in action_history[-3:] 
+                if a.get("action") == "tap" and "below time" in a.get("description", "").lower()
+            ]
+            
+            # Don't try to open sidebar again if we just opened it or if we're already in Settings
+            just_opened_sidebar = action_history and action_history[-1].get("action") == "open_sidebar"
+            already_in_settings = any("settings" in t.lower() for t in ui_text) or has_tapped_settings
+            
+            if not already_in_settings and not just_opened_sidebar and len(recent_below_time_taps) < 2:
                 # Not in Settings or Appearance - need to open sidebar first
-                # Check if we just tapped the button below time - look for Settings in sidebar
-                if action_history and action_history[-1].get("action") == "tap" and "below time" in action_history[-1].get("description", "").lower():
-                    # We just tapped the button - now look for Settings icon in the sidebar that appeared from left
-                    print(f"  → Sidebar opened, looking for Settings icon in sidebar...")
+                # Use reliable ratio coordinates for sidebar button (open_sidebar)
+                print(f"  → Opening sidebar using ratio coordinates (0.12W, 0.09H)...")
+                from tools.adb_tools import get_screen_size
+                
+                screen_size = get_screen_size()
+                if screen_size:
+                    width, height = screen_size
+                    x = int(width * 0.12)  # 12% from left (top-left header area)
+                    y = int(height * 0.09)  # 9% from top
+                    print(f"  → Tapping sidebar button at ratio coordinates ({x}, {y})")
                     return {
-                        "action": "tap",
-                        "x": 0,
-                        "y": 0,
-                        "description": "Tap 'Settings' icon in sidebar (appeared from left)"
+                        "action": "open_sidebar",
+                        "x": x,
+                        "y": y,
+                        "description": f"Open sidebar using ratio coordinates ({x}, {y})"
                     }
-                
-                # Use LLM vision to find the button BELOW TIME in top-right area
-                print(f"  → Looking for button below time (top-right area) to open sidebar...")
-                
-                # Use LLM vision to find the button below time
+                else:
+                    # Fallback if screen size not available
+                    print(f"  → Screen size not available, using default coordinates")
+                    return {
+                        "action": "open_sidebar",
+                        "x": 88,  # Default for common resolutions
+                        "y": 134,
+                        "description": "Open sidebar using default coordinates"
+                    }
                 img = Image.open(screenshot_path)
                 img_buffer = io.BytesIO()
                 img.save(img_buffer, format='PNG')
