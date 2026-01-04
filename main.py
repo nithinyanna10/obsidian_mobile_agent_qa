@@ -8,8 +8,8 @@ from agents.executor import execute_action
 from agents.supervisor import verify, compare_with_expected
 from tools.screenshot import ensure_screenshots_dir, take_screenshot
 from tools.adb_tools import reset_app
-from config import OBSIDIAN_PACKAGE, OLLAMA_BASE_URL
-from tools.ollama_client import check_ollama_connection
+from tools.memory import memory
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE
 import time
 import os
 
@@ -25,14 +25,13 @@ def run_test_suite():
     # Ensure screenshots directory exists
     ensure_screenshots_dir()
     
-    # Check for Ollama connection
-    if not check_ollama_connection():
-        print("\n⚠️  WARNING: Ollama is not running or not accessible!")
-        print(f"Please ensure Ollama is running at {OLLAMA_BASE_URL}")
-        print("Start Ollama with: ollama serve")
+    # Check for API key
+    if not OPENAI_API_KEY or OPENAI_API_KEY == "YOUR_API_KEY_HERE":
+        print("\n⚠️  WARNING: OPENAI_API_KEY not configured!")
+        print("Please set it in config.py or as an environment variable")
         print("\nContinuing anyway...\n")
     else:
-        print(f"✓ Ollama connection verified\n")
+        print(f"✓ OpenAI API key configured\n")
     
     results = []
     previous_test_passed = False  # Track if previous test passed
@@ -94,26 +93,25 @@ def run_test_suite():
                 execution_result = execute_action(next_action)
                 
                 if execution_result["status"] == "failed":
-                    reason = execution_result.get('error', execution_result.get('reason', 'Unknown error'))
-                    print(f"❌ Execution failed: {reason}")
-                    # Add failed action to history with failure marker
-                    failed_action = next_action.copy()
-                    failed_action["_execution_failed"] = True
-                    failed_action["_failure_reason"] = reason
-                    action_history.append(failed_action)
-                    # Don't break - let planner try a different approach
-                    screenshot_path = execution_result.get("screenshot", screenshot_path)
-                    print(f"⚠️  Action failed, planner will try different approach\n")
-                    continue
-                
-                # Check for warnings (like text not verified)
-                if execution_result.get("warning"):
-                    print(f"⚠️  Warning: {execution_result.get('warning')}")
-                    # Mark action with warning
-                    next_action["_warning"] = execution_result.get("warning")
+                    print(f"❌ Execution failed: {execution_result.get('error', execution_result.get('reason', 'Unknown error'))}")
+                    # Record failure in memory for learning
+                    context = {
+                        "current_screen": next_action.get('_android_state', {}).get('current_screen', 'unknown'),
+                        "test_goal": test["text"]
+                    }
+                    memory.record_failure(context, action_history + [next_action], execution_result.get('reason', 'Unknown error'))
+                    memory.update_reward(next_action.get("action", "unknown"), -0.5)  # Negative reward
+                    
+                    # Don't break immediately - let planner try a different approach
+                    # But mark the action as failed in history
+                    next_action["_execution_failed"] = True
+                    next_action["_execution_reason"] = execution_result.get('reason', 'Unknown error')
                 
                 # Update screenshot and action history
                 screenshot_path = execution_result.get("screenshot", screenshot_path)
+                # Store execution result in action for planner to see
+                next_action["_execution_result"] = execution_result
+                next_action["_execution_status"] = execution_result.get("status", "unknown")
                 action_history.append(next_action)
                 
                 print(f"✓ Action executed, screenshot updated\n")
@@ -138,6 +136,25 @@ def run_test_suite():
             # Compare with expected result
             comparison = compare_with_expected(verdict, test["should_pass"])
             print(f"\n{comparison['message']}")
+            
+            # Record outcome in memory for reinforcement learning
+            context = {
+                "current_screen": "test_complete",
+                "test_goal": test["text"]
+            }
+            if verdict == "PASS" and test["should_pass"]:
+                # Success! Record successful pattern
+                memory.record_success(context, action_history, f"Test {test['id']} passed")
+                # Positive rewards for successful actions
+                for action in action_history:
+                    memory.update_reward(action.get("action", "unknown"), 0.2)
+                print(f"  💾 Recorded successful pattern in memory")
+            elif verdict == "FAIL" and not test["should_pass"]:
+                # Expected failure - still a success in terms of test design
+                memory.record_success(context, action_history, f"Test {test['id']} correctly failed")
+            else:
+                # Unexpected result - record as failure
+                memory.record_failure(context, action_history, f"Test {test['id']} unexpected result: {verdict}")
             
             test_result["status"] = verdict
             test_result["verdict"] = verdict

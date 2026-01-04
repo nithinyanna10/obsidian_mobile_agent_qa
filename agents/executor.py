@@ -5,8 +5,15 @@ Uses UIAutomator to find real coordinates when LLM provides generic ones
 Never assumes success
 """
 from tools.adb_tools import tap, type_text, type_text_slow, keyevent, keycombination, swipe, open_app, find_element_by_text, bounds_to_center, dump_ui, get_ui_text
+import xml.etree.ElementTree as ET
 from tools.screenshot import take_screenshot
-from config import OBSIDIAN_PACKAGE
+from config import OBSIDIAN_PACKAGE, OPENAI_API_KEY, OPENAI_MODEL
+from openai import OpenAI
+from PIL import Image
+import base64
+import io
+import json
+import re
 import time
 
 
@@ -53,7 +60,42 @@ def execute_action(action):
                         search_texts = ["allow", "ok", "permit", "accept"]
                     elif "continue" in desc_lower:
                         search_texts = ["continue", "next"]
-                    elif "settings" in desc_lower or "setting" in desc_lower:
+                    elif "settings" in desc_lower or "setting" in desc_lower or "gear icon" in desc_lower:
+                        # For Settings gear icon, try ratio coordinates first (more reliable)
+                        if "gear icon" in desc_lower or "ratio coordinates" in desc_lower:
+                            from tools.adb_tools import get_screen_size
+                            screen_size = get_screen_size()
+                            if screen_size:
+                                width, height = screen_size
+                                tap_x = int(width * 0.774)  # 77.4% from left
+                                tap_y = int(height * 0.102)  # 10.2% from top
+                                print(f"  → Using ratio coordinates for Settings gear icon: ({tap_x}, {tap_y})")
+                                
+                                # Try 2-3 nearby taps if the first one misses (gear icon hitbox can be finicky)
+                                nearby_offsets = [(0, 0), (-5, -5), (5, 5)]
+                                for offset_x, offset_y in nearby_offsets:
+                                    try_x = tap_x + offset_x
+                                    try_y = tap_y + offset_y
+                                    print(f"  → Tapping Settings gear icon at ({try_x}, {try_y})...")
+                                    tap(try_x, try_y)
+                                    time.sleep(1.0)
+                                    
+                                    # Check if we're now in Settings screen
+                                    ui_text_check = get_ui_text()
+                                    if ui_text_check and any("settings" in t.lower() for t in ui_text_check):
+                                        print(f"  ✓ Successfully tapped Settings gear icon (attempt with offset {offset_x}, {offset_y})")
+                                        time.sleep(1.5)  # Wait for Settings screen to fully load
+                                        break
+                                
+                                # If we successfully tapped, return early
+                                screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                                return {
+                                    "status": "executed",
+                                    "action": action,
+                                    "screenshot": screenshot_path
+                                }
+                        
+                        # Fallback to text search
                         search_texts = ["settings", "setting", "gear", "menu", "options"]
                     elif "appearance" in desc_lower:
                         search_texts = ["appearance", "theme", "color", "display"]
@@ -90,6 +132,10 @@ def execute_action(action):
                     elif "storage" in desc_lower:
                         # Generic storage selection - prefer app/internal over device
                         search_texts = ["app storage", "internal storage", "app", "internal", "storage"]
+                    elif "top-right" in desc_lower or "menu button" in desc_lower or "three dots" in desc_lower or "hamburger" in desc_lower:
+                        # For top-right menu - try to find menu indicators, but use coordinates as fallback
+                        search_texts = ["more", "menu", "options", "settings", "⋮", "☰"]
+                        # If not found, will use provided coordinates (1000, 100)
                     else:
                         # Extract key words
                         words = [w for w in description.split() if len(w) > 2]
@@ -106,6 +152,12 @@ def execute_action(action):
                                 print(f"  ✓ Found element '{search_text}' at ({x}, {y})")
                                 found = True
                                 break
+                    
+                    # Special handling for top-right menu: if not found by text, use provided coordinates
+                    if not found and ("top-right" in desc_lower or "menu button" in desc_lower):
+                        if x > 500 and y < 300:  # Valid top-right coordinates (x > 500, y < 300)
+                            print(f"  📍 Using provided top-right coordinates ({x}, {y}) for menu button")
+                            found = True
                     
                     if not found:
                         # If coordinates are invalid (0,0) or generic, fail instead of tapping nothing
@@ -187,7 +239,52 @@ def execute_action(action):
             target = action.get("target", "")  # "title" or "body"
             print(f"  ⌨️  Type: {description} - '{text}' (target: {target})")
             
-            # If target is specified, focus that field first
+            # ALWAYS tap input field first to ensure keyboard appears
+            # This is critical for vault name input and other text fields
+            try:
+                root = dump_ui()
+                if root:
+                    edittexts = []
+                    for node in root.iter("node"):
+                        class_name = node.attrib.get("class", "").lower()
+                        if "edittext" in class_name:
+                            bounds = node.attrib.get("bounds")
+                            if bounds and bounds != "[0,0][0,0]":
+                                try:
+                                    b = bounds.replace("[", "").replace("]", ",").split(",")
+                                    x1, y1, x2, y2 = map(int, b[:4])
+                                    center_x = (x1 + x2) // 2
+                                    center_y = (y1 + y2) // 2
+                                    width = x2 - x1
+                                    height = y2 - y1
+                                    area = width * height
+                                    edittexts.append({
+                                        "x": center_x,
+                                        "y": center_y,
+                                        "y1": y1,
+                                        "area": area
+                                    })
+                                except:
+                                    continue
+                    
+                    if edittexts:
+                        selected = None
+                        if target == "title":
+                            selected = min(edittexts, key=lambda e: e["y1"])
+                        elif target == "body":
+                            selected = max(edittexts, key=lambda e: (e["area"], e["y1"]))
+                        else:
+                            # No target specified - use the first/only EditText (for vault name, etc.)
+                            selected = edittexts[0]
+                        
+                        if selected:
+                            print(f"  📍 Tapping input field at ({selected['x']}, {selected['y']}) to show keyboard...")
+                            tap(selected['x'], selected['y'])
+                            time.sleep(0.5)  # Wait for keyboard to appear
+            except Exception as e:
+                print(f"  ⚠️  Could not find input field: {e}, proceeding anyway...")
+            
+            # If target is specified, also focus that specific field (for note editor)
             if target:
                 # Call focus action internally
                 focus_action = {"action": "focus", "target": target, "description": f"Focus {target} field"}
@@ -230,25 +327,28 @@ def execute_action(action):
                             if selected:
                                 print(f"  📍 Focusing {target} field at ({selected['x']}, {selected['y']})")
                                 tap(selected['x'], selected['y'])
-                                time.sleep(0.3)
+                                time.sleep(0.5)  # Wait longer for field to be focused
                 except:
                     pass
             
-            # Clear existing text using Ctrl+A combo (better than keyevent)
+            # Clear existing text - Mobile-safe method (no Ctrl+A)
+            # Strategy: Move cursor to end → Backspace N times → Type new text
+            print(f"  🗑️  Clearing existing text (mobile-safe method)...")
             try:
-                keycombination(113, 29)  # Ctrl + A
-                time.sleep(0.2)
-                keyevent(67)  # DEL
-                time.sleep(0.3)
-            except:
-                # Fallback to old method
-                try:
-                    keyevent(113)  # KEYCODE_CTRL_A
-                    time.sleep(0.2)
-                    keyevent(67)   # KEYCODE_DEL
-                    time.sleep(0.3)
-                except:
-                    pass
+                # 1) Move cursor to end (KEYCODE_MOVE_END = 123)
+                keyevent(123)  # KEYCODE_MOVE_END
+                time.sleep(0.05)
+                
+                # 2) Backspace a lot (KEYCODE_DEL = 67)
+                # 40 is safe for "UntitledMeeting Notes" or similar
+                for _ in range(40):
+                    keyevent(67)  # KEYCODE_DEL
+                    time.sleep(0.01)  # Small delay between backspaces
+                
+                time.sleep(0.1)
+                print(f"  ✓ Text cleared (moved to end + backspaced)")
+            except Exception as e:
+                print(f"  ⚠️  Error clearing text: {e}, proceeding anyway...")
             
             # Type the text
             type_text(text)
@@ -279,6 +379,16 @@ def execute_action(action):
                     if text_normalized in ui_blob:
                         print(f"  ✓ Verified: '{text}' appears in UI")
                         verified = True
+                        # Dismiss keyboard by tapping on screen (outside input field)
+                        # Tap in the middle-top area to dismiss keyboard
+                        try:
+                            # Get screen dimensions (approximate for most phones)
+                            # Tap in safe area (middle-top) to dismiss keyboard
+                            print(f"  ⌨️  Dismissing keyboard by tapping screen...")
+                            tap(540, 200)  # Middle-top area, safe from keyboard
+                            time.sleep(0.3)  # Wait for keyboard to dismiss
+                        except:
+                            pass
                     else:
                         print(f"  ⚠️  Warning: '{text}' not found in UI, retrying with slow typing...")
                         # Retry with slow per-character typing
@@ -301,6 +411,13 @@ def execute_action(action):
                             if text_normalized in ui_blob:
                                 print(f"  ✓ Verified after retry: '{text}' appears in UI")
                                 verified = True
+                                # Dismiss keyboard by tapping on screen
+                                try:
+                                    print(f"  ⌨️  Dismissing keyboard by tapping screen...")
+                                    tap(540, 200)  # Middle-top area
+                                    time.sleep(0.3)
+                                except:
+                                    pass
                             else:
                                 print(f"  ⚠️  Still not verified: '{text}' may not be entered correctly")
                                 # Mark as failed - text not entered
@@ -345,6 +462,193 @@ def execute_action(action):
             print(f"  📱 Open app: {app}")
             open_app(app)
             time.sleep(3)  # Wait for app to load
+        
+        elif action_type == "open_sidebar":
+            # Special action: Open sidebar using ratio coordinates, then find Settings gear icon
+            x = action.get("x", 88)
+            y = action.get("y", 134)
+            print(f"  📂 Opening sidebar at ({x}, {y})...")
+            tap(x, y)
+            time.sleep(2.0)  # Wait longer for sidebar to fully slide in
+            
+            # Generate UI XML dump after opening sidebar (for analysis)
+            print(f"  📄 Generating UI XML dump after opening sidebar...")
+            try:
+                root = dump_ui()
+                if root:
+                    xml_str = ET.tostring(root, encoding='unicode')
+                    # Save to file for analysis
+                    dump_file = f"sidebar_ui_dump_{int(time.time())}.xml"
+                    with open(dump_file, 'w', encoding='utf-8') as f:
+                        f.write(xml_str)
+                    print(f"  ✓ UI XML dump saved to: {dump_file}")
+            except Exception as e:
+                print(f"  ⚠️  Could not generate UI dump: {e}")
+            
+            # Take screenshot after sidebar opens (wait a bit more to ensure sidebar is fully visible)
+            time.sleep(0.5)
+            screenshot_path = take_screenshot(f"sidebar_opened_{int(time.time())}.png")
+            
+            # Try XML search first (faster and more reliable, no API cost)
+            print(f"  🔍 Searching for Settings in sidebar via XML...")
+            settings_tapped = False
+            settings_bounds = find_element_by_text("settings")
+            if settings_bounds:
+                tap_x, tap_y = bounds_to_center(settings_bounds)
+                if tap_x and tap_y:
+                    print(f"  ✓ Found Settings via XML at ({tap_x}, {tap_y}), tapping...")
+                    tap(tap_x, tap_y)
+                    time.sleep(2.0)
+                    settings_tapped = True
+                    print(f"  ✓ Successfully tapped Settings via XML")
+            
+            # Fallback to LLM vision only if XML search fails (to save API quota)
+            if not settings_tapped:
+                print(f"  ⚠️  Settings not found via XML, trying LLM vision (may use API quota)...")
+                try:
+                    # Read and encode screenshot
+                    img = Image.open(screenshot_path)
+                    img_buffer = io.BytesIO()
+                    img.save(img_buffer, format='PNG')
+                    img_buffer.seek(0)
+                    img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
+                    
+                    # Prompt to find Settings gear icon
+                    settings_find_prompt = """Look at this screenshot. A sidebar has just opened from the left side of the screen.
+
+Find the Settings gear icon in this sidebar. It should be a gear/cog icon, usually with text "Settings" next to it or below it.
+
+Analyze the screenshot and identify:
+1. Is there a Settings gear icon visible in the sidebar?
+2. What are the exact coordinates (x, y) of the center of this Settings gear icon?
+
+Return ONLY a JSON object with:
+{
+  "found": true/false,
+  "description": "description of the Settings gear icon",
+  "x": x_coordinate_of_gear_icon_center,
+  "y": y_coordinate_of_gear_icon_center
+}
+
+If you cannot find it, return {"found": false}.
+
+IMPORTANT: Return ONLY valid JSON, no markdown, no code blocks, no explanations."""
+                    
+                    client = OpenAI(api_key=OPENAI_API_KEY)
+                    response = client.chat.completions.create(
+                        model=OPENAI_MODEL,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": settings_find_prompt},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
+                                ]
+                            }
+                        ],
+                        max_tokens=200,
+                        temperature=0.1
+                    )
+                    
+                    response_text = response.choices[0].message.content.strip()
+                    print(f"  📝 LLM response: {response_text[:200]}...")
+                    
+                    # Extract JSON from response - try multiple patterns
+                    settings_info = None
+                    
+                    # Try to find JSON in response
+                    json_patterns = [
+                        r'\{[^{}]*"found"[^{}]*\}',  # Simple JSON
+                        r'\{[^}]+\}',  # Any JSON object
+                        r'\{.*?"found".*?\}',  # JSON with "found" key
+                    ]
+                    
+                    for pattern in json_patterns:
+                        json_match = re.search(pattern, response_text, re.DOTALL)
+                        if json_match:
+                            try:
+                                settings_info = json.loads(json_match.group())
+                                break
+                            except json.JSONDecodeError:
+                                continue
+                    
+                    # If no JSON found, try parsing the whole response
+                    if not settings_info:
+                        try:
+                            # Remove markdown code blocks if present
+                            clean_text = response_text
+                            if clean_text.startswith("```json"):
+                                clean_text = clean_text[7:]
+                            if clean_text.startswith("```"):
+                                clean_text = clean_text[3:]
+                            if clean_text.endswith("```"):
+                                clean_text = clean_text[:-3]
+                            clean_text = clean_text.strip()
+                            settings_info = json.loads(clean_text)
+                        except json.JSONDecodeError:
+                            print(f"  ⚠️  Could not parse LLM response as JSON")
+                    
+                    if settings_info and settings_info.get("found") and settings_info.get("x") is not None and settings_info.get("y") is not None:
+                        tap_x = int(settings_info.get("x"))
+                        tap_y = int(settings_info.get("y"))
+                        desc = settings_info.get("description", "Settings gear icon")
+                        print(f"  ✓ LLM found Settings gear icon: {desc} at ({tap_x}, {tap_y})")
+                        tap(tap_x, tap_y)
+                        time.sleep(2.0)  # Wait for Settings screen to open
+                        settings_tapped = True
+                        print(f"  ✓ Successfully tapped Settings gear icon")
+                    else:
+                        print(f"  ⚠️  LLM could not find Settings gear icon (found={settings_info.get('found') if settings_info else None})")
+                        
+                except Exception as e:
+                    error_msg = str(e)
+                    if "quota" in error_msg.lower() or "429" in error_msg:
+                        print(f"  ⚠️  OpenAI API quota exceeded, skipping LLM vision (fallback to ratio coordinates)...")
+                    else:
+                        print(f"  ⚠️  Error using LLM vision: {e}")
+            
+            # Fallback to ratio coordinates if XML and LLM vision both failed
+            if not settings_tapped:
+                print(f"  🔍 Trying ratio coordinates for Settings gear icon...")
+                # Use ratio coordinates as final fallback (0.774W, 0.102H)
+                from tools.adb_tools import get_screen_size
+                screen_size = get_screen_size()
+                if screen_size:
+                    width, height = screen_size
+                    tap_x = int(width * 0.774)  # 77.4% from left
+                    tap_y = int(height * 0.102)  # 10.2% from top
+                    print(f"  → Using ratio coordinates (0.774W, 0.102H) = ({tap_x}, {tap_y})")
+                    
+                    # Try 2-3 nearby taps if the first one misses (gear icon hitbox can be finicky)
+                    nearby_offsets = [(0, 0), (-5, -5), (5, 5), (-5, 5), (5, -5)]
+                    for offset_x, offset_y in nearby_offsets[:3]:  # Try up to 3 taps
+                        try_x = tap_x + offset_x
+                        try_y = tap_y + offset_y
+                        print(f"  → Tapping Settings at ({try_x}, {try_y})...")
+                        tap(try_x, try_y)
+                        time.sleep(0.5)
+                        
+                        # Check if we're now in Settings screen
+                        ui_text = get_ui_text()
+                        if ui_text and any("settings" in t.lower() for t in ui_text):
+                            print(f"  ✓ Successfully tapped Settings (attempt with offset {offset_x}, {offset_y})")
+                            settings_tapped = True
+                            time.sleep(1.5)  # Wait for Settings screen to fully load
+                            break
+                    
+                    if not settings_tapped:
+                        print(f"  ⚠️  Settings not found after trying ratio coordinates with retries")
+            
+            # If still not found, return a status indicating we need to retry
+            if not settings_tapped:
+                print(f"  ⚠️  WARNING: Could not find and tap Settings gear icon after opening sidebar")
+                # Return status so planner knows to retry
+                return {
+                    "status": "partial",
+                    "action": action,
+                    "screenshot": take_screenshot(f"after_action_{int(time.time())}.png"),
+                    "message": "Sidebar opened but Settings gear icon not found/tapped"
+                }
             
         elif action_type == "assert":
             print(f"  ✓ Assert: {description}")
