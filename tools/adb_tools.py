@@ -284,7 +284,19 @@ def find_element_by_text(text):
     if "create" in text_lower and "note" in text_lower:
         search_terms.extend(["create", "new note", "create note", "note"])
     if "appearance" in text_lower:
-        search_terms.extend(["appearance", "theme", "color", "display"])
+        # For appearance, prioritize exact "appearance" match and exclude "settings"
+        # First pass: look for exact "appearance" text (not "settings")
+        for node in root.iter("node"):
+            node_text = node.attrib.get("text", "").lower().strip()
+            content_desc = node.attrib.get("content-desc", "").lower().strip()
+            # Must contain "appearance" but NOT "settings"
+            if ("appearance" in node_text or "appearance" in content_desc) and \
+               "settings" not in node_text and "settings" not in content_desc:
+                bounds = node.attrib.get("bounds")
+                if bounds and bounds != "[0,0][0,0]":
+                    return bounds
+        # If exact not found, try theme/color/display as fallback
+        search_terms.extend(["theme", "color", "display"])
     if "app storage" in text_lower or ("storage" in text_lower and "app" in text_lower):
         # Priority: find "app storage" or "internal storage" (NOT device storage)
         search_terms.extend(["app storage", "internal storage", "app", "internal"])
