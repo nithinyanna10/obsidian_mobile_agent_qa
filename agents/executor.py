@@ -50,7 +50,69 @@ def execute_action(action):
                     desc_lower = description.lower()
                     search_texts = []
                     
-                    if "create" in desc_lower and "vault" in desc_lower:
+                    # IMPORTANT: Check "appearance" BEFORE "settings" because descriptions often contain both
+                    # e.g., "Tap 'Appearance' tab in Settings" - we want appearance, not settings
+                    if "appearance" in desc_lower:
+                        print(f"  🎯 APPEARANCE DETECTED in description: '{description}'")
+                        # Generate UI XML dump after entering Settings (for analysis)
+                        print(f"  📄 Generating UI XML dump after entering Settings...")
+                        try:
+                            root = dump_ui()
+                            if root:
+                                xml_str = ET.tostring(root, encoding='unicode')
+                                dump_file = f"settings_ui_dump_{int(time.time())}.xml"
+                                with open(dump_file, 'w', encoding='utf-8') as f:
+                                    f.write(xml_str)
+                                print(f"  ✓ UI XML dump saved to: {dump_file}")
+                        except Exception as e:
+                            print(f"  ⚠️  Could not generate UI dump: {e}")
+                        
+                        # Prioritize "appearance" - search for it first, exclude "settings"
+                        print(f"  🔍 Searching specifically for 'Appearance' tab (excluding 'Settings')...")
+                        # First try exact "appearance" match using XML search
+                        appearance_bounds = find_element_by_text("appearance")
+                        if appearance_bounds:
+                            tap_x, tap_y = bounds_to_center(appearance_bounds)
+                            if tap_x and tap_y:
+                                print(f"  ✓ Found 'Appearance' tab via XML at ({tap_x}, {tap_y})")
+                                tap(tap_x, tap_y)
+                                time.sleep(1.5)
+                                screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                                return {
+                                    "status": "executed",
+                                    "action": action,
+                                    "screenshot": screenshot_path
+                                }
+                        
+                        # If XML search failed, use ratio coordinates (0.29W, 0.385H)
+                        print(f"  ⚠️  Appearance not found via XML, using ratio coordinates (0.29W, 0.385H)...")
+                        from tools.adb_tools import get_screen_size
+                        screen_size = get_screen_size()
+                        if screen_size:
+                            width, height = screen_size
+                            tap_x = int(width * 0.29)  # 29% from left
+                            tap_y = int(height * 0.385)  # 38.5% from top
+                            print(f"  → Using ratio coordinates for Appearance tab: ({tap_x}, {tap_y})")
+                            tap(tap_x, tap_y)
+                            time.sleep(1.5)
+                            screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                            return {
+                                "status": "executed",
+                                "action": action,
+                                "screenshot": screenshot_path
+                            }
+                        else:
+                            # Fallback to default coordinates
+                            print(f"  → Screen size not available, using default coordinates (200, 580)")
+                            tap(200, 580)
+                            time.sleep(1.5)
+                            screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                            return {
+                                "status": "executed",
+                                "action": action,
+                                "screenshot": screenshot_path
+                            }
+                    elif "create" in desc_lower and "vault" in desc_lower:
                         search_texts = ["create", "vault", "new vault", "create vault"]
                     elif "get started" in desc_lower or "started" in desc_lower:
                         search_texts = ["get started", "started", "begin"]
@@ -97,8 +159,9 @@ def execute_action(action):
                         
                         # Fallback to text search
                         search_texts = ["settings", "setting", "gear", "menu", "options"]
-                    elif "appearance" in desc_lower:
-                        search_texts = ["appearance", "theme", "color", "display"]
+                    elif "meeting notes" in desc_lower and ("file" in desc_lower or "open" in desc_lower or "tap" in desc_lower):
+                        # For Meeting Notes file - search specifically for it
+                        search_texts = ["meeting notes", "meeting", "notes"]
                     elif "create" in desc_lower and "note" in desc_lower:
                         search_texts = ["create", "note", "new note", "add note", "+", "new"]
                     elif "tap to create" in desc_lower and "note" in desc_lower:
@@ -122,9 +185,9 @@ def execute_action(action):
                     elif "stop creating" in desc_lower or "existing vault" in desc_lower:
                         # Find vault name or enter button
                         search_texts = ["internvault", "use this folder", "vault", "enter"]
-                    elif "close" in desc_lower and "button" in desc_lower:
-                        # For settings - try back key instead of close button
-                        search_texts = ["back", "close", "cancel", "done"]
+                    elif "close" in desc_lower and "button" in desc_lower or ("close" in desc_lower and ("appearance" in desc_lower or "settings" in desc_lower)):
+                        # For Appearance/Settings - look for close/cross button
+                        search_texts = ["close", "back", "×", "✕", "cancel", "done", "x"]
                     elif "app storage" in desc_lower or ("storage" in desc_lower and "app" in desc_lower):
                         # Priority: find "app storage" or "internal storage" (NOT device storage)
                         search_texts = ["app storage", "internal storage", "app", "internal"]
@@ -132,9 +195,9 @@ def execute_action(action):
                     elif "storage" in desc_lower:
                         # Generic storage selection - prefer app/internal over device
                         search_texts = ["app storage", "internal storage", "app", "internal", "storage"]
-                    elif "top-right" in desc_lower or "menu button" in desc_lower or "three dots" in desc_lower or "hamburger" in desc_lower:
+                    elif "top-right" in desc_lower or "menu button" in desc_lower or "three dots" in desc_lower or "hamburger" in desc_lower or ("three" in desc_lower and "button" in desc_lower):
                         # For top-right menu - try to find menu indicators, but use coordinates as fallback
-                        search_texts = ["more", "menu", "options", "settings", "⋮", "☰"]
+                        search_texts = ["more", "menu", "options", "settings", "⋮", "☰", "more options"]
                         # If not found, will use provided coordinates (1000, 100)
                     else:
                         # Extract key words
@@ -501,6 +564,65 @@ def execute_action(action):
                     time.sleep(2.0)
                     settings_tapped = True
                     print(f"  ✓ Successfully tapped Settings via XML")
+                    
+                    # Verify we're in Settings screen using LLM vision
+                    print(f"  🔍 Verifying we're in Settings screen using LLM vision...")
+                    try:
+                        verify_screenshot = take_screenshot(f"settings_verification_{int(time.time())}.png")
+                        img = Image.open(verify_screenshot)
+                        img_buffer = io.BytesIO()
+                        img.save(img_buffer, format='PNG')
+                        img_buffer.seek(0)
+                        img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
+                        
+                        verify_prompt = """Look at this screenshot. We just tapped the Settings icon.
+
+Are we currently in the Settings screen? Look for:
+- Settings title or header
+- Settings options/tabs (like Appearance, About, etc.)
+- Settings-related UI elements
+
+Return ONLY a JSON object:
+{
+  "in_settings": true/false,
+  "reason": "brief explanation"
+}
+
+If you see Settings screen elements, return {"in_settings": true}. Otherwise {"in_settings": false}."""
+                        
+                        client = OpenAI(api_key=OPENAI_API_KEY)
+                        response = client.chat.completions.create(
+                            model=OPENAI_MODEL,
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": verify_prompt},
+                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
+                                    ]
+                                }
+                            ],
+                            max_tokens=100,
+                            temperature=0.1
+                        )
+                        
+                        response_text = response.choices[0].message.content.strip()
+                        # Extract JSON
+                        json_match = re.search(r'\{[^}]+\}', response_text, re.DOTALL)
+                        if json_match:
+                            verify_result = json.loads(json_match.group())
+                            if verify_result.get("in_settings"):
+                                print(f"  ✓ LLM confirmed: We're in Settings screen ({verify_result.get('reason', '')})")
+                            else:
+                                print(f"  ⚠️  LLM says we're NOT in Settings screen ({verify_result.get('reason', '')})")
+                        else:
+                            print(f"  ⚠️  Could not parse LLM verification response")
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "quota" in error_msg.lower() or "429" in error_msg:
+                            print(f"  ⚠️  OpenAI quota exceeded, skipping verification")
+                        else:
+                            print(f"  ⚠️  Error verifying Settings screen: {e}")
             
             # Fallback to LLM vision only if XML search fails (to save API quota)
             if not settings_tapped:
