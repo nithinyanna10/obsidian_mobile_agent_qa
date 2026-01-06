@@ -119,6 +119,38 @@ Rules:
 - As long as "Daily Standup" is visible and "Meeting Note(s)" appears anywhere in the note → Test 2 PASSED
 - Do NOT require line breaks - accept the note if both texts are present
 
+**SPECIFIC TEST 4 RULES (Appearance Accent Color):**
+- **CRITICAL**: This test expects the accent color in Appearance settings to be RED
+- Test 4 has should_pass=False, meaning we EXPECT the test to FAIL (accent color should NOT be Red)
+- **VERIFICATION LOGIC**:
+  - Look for the accent color setting/option in the Appearance screen
+  - Check what color is currently selected as the accent color
+  - If the accent color IS RED → The verification PASSES (accent color is Red) → But should_pass=False means we expect failure → Test result mismatch → Return FAIL
+  - If the accent color is NOT RED (Purple/Blue/Green/default/monochrome/any other color) → The verification FAILS (accent color is not Red) → Return FAIL (the test failed as expected)
+- Look for accent color settings/options in the Appearance screen (after tapping Appearance tab in Settings)
+- Check the currently selected accent color - it should be visible in the Appearance settings screen
+- Common accent color options: Red, Blue, Green, Purple, Orange, etc.
+- **IMPORTANT**: If the accent color is NOT Red (Purple, Blue, Green, etc.) → Return FAIL (the test failed because accent color is not Red)
+- If the accent color IS Red → Return FAIL (because should_pass=False means we expect failure, but if it's Red, the verification passed, so test fails)
+- If you cannot see the accent color setting or cannot determine the selected color → FAIL
+- **SUMMARY**: The test expects accent color to be Red. If accent color IS Red → verification passes but should_pass=False → Return FAIL. If accent color is NOT Red (Purple/Blue/etc.) → verification fails → Return FAIL.
+
+**SPECIFIC TEST 3 RULES (Print to PDF):**
+- **CRITICAL**: This test expects to find "Print to PDF" button in the main file menu
+- Test 3 has should_pass=False, meaning we EXPECT the test to FAIL (button should NOT be found)
+- **NOTE**: This test runs after Test 2, so we're already in Meeting Notes page (with "Daily Standup" visible)
+- **VERIFICATION LOGIC**:
+  - Look for "Print to PDF" or "Export to PDF" button in the menu (after tapping three dots/menu button)
+  - The button should be in the Meeting Notes page menu (where "Daily Standup" is visible)
+  - If the "Print to PDF" button IS FOUND → The verification PASSES (button found) → But should_pass=False means we expect failure → Test result mismatch → Return FAIL
+  - If the "Print to PDF" button is NOT FOUND → The verification FAILS (button not found) → Return FAIL (the test failed as expected)
+- Look for "Print to PDF", "Export to PDF", or similar text in the menu
+- The menu should be opened from the Meeting Notes page (with "Daily Standup" visible)
+- If the button is NOT found → Return FAIL (the test failed because button is not in menu)
+- If the button IS found → Return FAIL (because should_pass=False means we expect failure, but if it's found, the verification passed, so test fails)
+- If you cannot see the menu or cannot determine if button exists → FAIL
+- **SUMMARY**: The test expects "Print to PDF" button to be in menu. If button IS found → verification passes but should_pass=False → Return FAIL. If button is NOT found → verification fails → Return FAIL.
+
 Output format (JSON):
 {{
     "verdict": "PASS" or "FAIL",

@@ -161,8 +161,50 @@
           }
         ],
         "outcome": "Test 1 passed",
-        "timestamp": "2026-01-03T22:23:14.175593",
-        "count": 12
+        "timestamp": "2026-01-05T18:15:56.790287",
+        "count": 27
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Obsidian' app icon",
+            "x": 650,
+            "y": 1650
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "type",
+            "description": "Type vault name",
+            "text": "InternVault"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "outcome": "Test 1 passed",
+        "timestamp": "2026-01-05T17:33:42.168218",
+        "count": 3
       }
     ],
     "test_complete:create a new note titled 'meeting notes' and type ": [
@@ -193,8 +235,8 @@
           }
         ],
         "outcome": "Test 2 passed",
-        "timestamp": "2026-01-03T22:25:35.995350",
-        "count": 13
+        "timestamp": "2026-01-05T18:18:20.392443",
+        "count": 30
       }
     ],
     "test_complete:go to settings and verify that the 'appearance' ta": [
@@ -222,6 +264,35 @@
         "outcome": "Test 3 correctly failed",
         "timestamp": "2026-01-03T00:04:59.776614",
         "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "open_sidebar",
+            "description": "Open sidebar using ratio coordinates (129, 216)",
+            "x": 129,
+            "y": 216
+          },
+          {
+            "action": "wait",
+            "description": "Wait for Settings screen to load after tapping Settings"
+          },
+          {
+            "action": "open_sidebar",
+            "description": "Open sidebar using ratio coordinates (129, 216)",
+            "x": 129,
+            "y": 216
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Appearance' tab in Settings (verified in Settings)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "outcome": "Test 3 correctly failed",
+        "timestamp": "2026-01-04T23:43:51.830962",
+        "count": 1
       }
     ],
     "test_complete:find and click the 'print to pdf' button in the ma": [
@@ -229,6 +300,19 @@
         "actions": [],
         "outcome": "Test 4 correctly failed",
         "timestamp": "2026-01-03T00:05:13.663732",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap three dots menu button (top right) in Meeting Notes to find Print to PDF",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "outcome": "Test 3 correctly failed",
+        "timestamp": "2026-01-05T18:19:08.647760",
         "count": 1
       }
     ]
@@ -443,8 +527,8 @@
       {
         "actions": [],
         "reason": "Test 1 unexpected result: ERROR",
-        "timestamp": "2026-01-03T00:40:06.358430",
-        "count": 1
+        "timestamp": "2026-01-04T22:19:49.048655",
+        "count": 2
       },
       {
         "actions": [
@@ -508,6 +592,12 @@
         ],
         "reason": "Test 2 unexpected result: FAIL",
         "timestamp": "2026-01-03T00:43:38.614482",
+        "count": 1
+      },
+      {
+        "actions": [],
+        "reason": "Test 2 unexpected result: FAIL",
+        "timestamp": "2026-01-04T22:20:02.781999",
         "count": 1
       }
     ],
@@ -593,17 +683,333 @@
           }
         ],
         "reason": "Element not found for 'Tap 'Continue without sync' button' and no valid coordinates provided",
-        "timestamp": "2026-01-03T20:14:26.026883",
+        "timestamp": "2026-01-05T17:48:37.593438",
+        "count": 3
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'App storage' option' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:45:28.846620",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'App storage' option' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:45:53.748429",
+        "count": 1
+      }
+    ],
+    "test_complete:go to settings and verify that the 'appearance' ta": [
+      {
+        "actions": [
+          {
+            "action": "open_sidebar",
+            "description": "Open sidebar using ratio coordinates (129, 216)",
+            "x": 129,
+            "y": 216
+          },
+          {
+            "action": "wait",
+            "description": "Wait for Settings screen to load after tapping Settings"
+          },
+          {
+            "action": "open_sidebar",
+            "description": "Open sidebar using ratio coordinates (129, 216)",
+            "x": 129,
+            "y": 216
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Appearance' tab in Settings (verified in Settings)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Test 3 unexpected result: PASS",
+        "timestamp": "2026-01-04T23:31:58.190271",
+        "count": 1
+      }
+    ],
+    "test_complete:find and click the 'print to pdf' button in the ma": [
+      {
+        "actions": [],
+        "reason": "Test 4 unexpected result: PASS",
+        "timestamp": "2026-01-04T23:32:16.264143",
+        "count": 1
+      }
+    ],
+    "unknown:find and click the 'print to pdf' button in the ma": [
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'Meeting Notes' file to open it' and no valid coordinates provided",
+        "timestamp": "2026-01-04T23:44:17.367953",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'Meeting Notes' file to open it' and no valid coordinates provided",
+        "timestamp": "2026-01-04T23:44:42.111151",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'Meeting Notes' file to open it' and no valid coordinates provided",
+        "timestamp": "2026-01-04T23:45:06.760488",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'Meeting Notes' file to open it' and no valid coordinates provided",
+        "timestamp": "2026-01-04T23:45:35.766299",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Meeting Notes' file to open it",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'Meeting Notes' file to open it' and no valid coordinates provided",
+        "timestamp": "2026-01-04T23:46:02.227587",
+        "count": 1
+      }
+    ],
+    "unknown:open obsidian, create a new vault named 'internvau": [
+      {
+        "actions": [
+          {
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'App storage' or 'Internal storage' option (not device storage)' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:48:12.766020",
+        "count": 2
+      }
+    ],
+    "unknown:create a new note titled 'meeting notes' and type ": [
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Create note' or 'New note' button to create new note",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'Create note' or 'New note' button to create new note' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:52:35.893942",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Create note' or 'New note' button to create new note",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create note' or 'New note' button to create new note",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'Create note' or 'New note' button to create new note' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:52:56.669314",
         "count": 1
       }
     ]
   },
   "action_rewards": {
-    "type": 0.19667430133817732,
-    "open_app": 0.15424641509007803,
-    "tap": 0.19474542875011885,
+    "type": 0.19998611667831867,
+    "open_app": 0.19057974260550758,
+    "tap": 0.13615555877025273,
     "key": 0.020000000000000004,
-    "focus": 0.14916268343342004
+    "focus": 0.19152176834495682
   },
-  "last_updated": "2026-01-03T22:25:35.997073"
+  "last_updated": "2026-01-05T18:19:08.647782"
 }

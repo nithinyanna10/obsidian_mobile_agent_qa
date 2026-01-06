@@ -69,7 +69,7 @@ def run_test_suite():
                 # Planner: Analyze screenshot + Android state and decide next action
                 print("📋 Planning next action from screenshot + Android state...")
                 # Pass previous test result to planner (for Test 2 to know Test 1 passed)
-                next_action = plan_next_action(test["text"], screenshot_path, action_history, previous_test_passed=previous_test_passed)
+                next_action = plan_next_action(test["text"], screenshot_path, action_history, previous_test_passed=previous_test_passed, test_id=test["id"])
                 
                 # Log what we're about to do
                 action_type = next_action.get("action", "unknown")
