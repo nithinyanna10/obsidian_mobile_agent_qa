@@ -119,9 +119,9 @@ Rules:
 - As long as "Daily Standup" is visible and "Meeting Note(s)" appears anywhere in the note → Test 2 PASSED
 - Do NOT require line breaks - accept the note if both texts are present
 
-**SPECIFIC TEST 3 RULES (Appearance Accent Color):**
+**SPECIFIC TEST 4 RULES (Appearance Accent Color):**
 - **CRITICAL**: This test expects the accent color in Appearance settings to be RED
-- Test 3 has should_pass=False, meaning we EXPECT the test to FAIL (accent color should NOT be Red)
+- Test 4 has should_pass=False, meaning we EXPECT the test to FAIL (accent color should NOT be Red)
 - **VERIFICATION LOGIC**:
   - Look for the accent color setting/option in the Appearance screen
   - Check what color is currently selected as the accent color
@@ -135,9 +135,10 @@ Rules:
 - If you cannot see the accent color setting or cannot determine the selected color → FAIL
 - **SUMMARY**: The test expects accent color to be Red. If accent color IS Red → verification passes but should_pass=False → Return FAIL. If accent color is NOT Red (Purple/Blue/etc.) → verification fails → Return FAIL.
 
-**SPECIFIC TEST 4 RULES (Print to PDF):**
+**SPECIFIC TEST 3 RULES (Print to PDF):**
 - **CRITICAL**: This test expects to find "Print to PDF" button in the main file menu
-- Test 4 has should_pass=False, meaning we EXPECT the test to FAIL (button should NOT be found)
+- Test 3 has should_pass=False, meaning we EXPECT the test to FAIL (button should NOT be found)
+- **NOTE**: This test runs after Test 2, so we're already in Meeting Notes page (with "Daily Standup" visible)
 - **VERIFICATION LOGIC**:
   - Look for "Print to PDF" or "Export to PDF" button in the menu (after tapping three dots/menu button)
   - The button should be in the Meeting Notes page menu (where "Daily Standup" is visible)
