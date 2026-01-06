@@ -159,35 +159,6 @@ def execute_action(action):
                         
                         # Fallback to text search
                         search_texts = ["settings", "setting", "gear", "menu", "options"]
-                    elif "meeting notes" in desc_lower and ("file" in desc_lower or "open" in desc_lower or "tap" in desc_lower):
-                        # For Meeting Notes file - search specifically for it
-                        search_texts = ["meeting notes", "meeting", "notes"]
-                    elif "create" in desc_lower and "note" in desc_lower:
-                        search_texts = ["create", "note", "new note", "add note", "+", "new"]
-                    elif "tap to create" in desc_lower and "note" in desc_lower:
-                        # For "Tap to create new note" - find create note button
-                        search_texts = ["create", "note", "new note", "add", "+"]
-                    elif "use this folder" in desc_lower or "this folder" in desc_lower:
-                        # CRITICAL: Must match exact "use this folder" phrase, NOT "create new folder"
-                        # The find_element_by_text function will handle this, but prioritize exact match
-                        search_texts = ["use this folder"]  # Only exact match, no partial words
-                    elif "internvault" in desc_lower:
-                        # Priority: find InternVault vault name first (exact match)
-                        # Try to find the actual vault name text, not "enter vault" button
-                        search_texts = ["internvault", "intern vault"]
-                        # Don't include generic "vault" as it might match wrong elements
-                    elif "enter" in desc_lower and "vault" in desc_lower:
-                        # Try to find vault name "InternVault" first, then "USE THIS FOLDER"
-                        search_texts = ["internvault", "intern vault", "use this folder", "vault", "enter", "open"]
-                    elif "enter existing vault" in desc_lower or ("enter" in desc_lower and "vault" in desc_lower and "existing" in desc_lower):
-                        # Try to find vault name or "USE THIS FOLDER" button
-                        search_texts = ["internvault", "use this folder", "vault", "enter", "open"]
-                    elif "stop creating" in desc_lower or "existing vault" in desc_lower:
-                        # Find vault name or enter button
-                        search_texts = ["internvault", "use this folder", "vault", "enter"]
-                    elif "close" in desc_lower and "button" in desc_lower or ("close" in desc_lower and ("appearance" in desc_lower or "settings" in desc_lower)):
-                        # For Appearance/Settings - look for close/cross button
-                        search_texts = ["close", "back", "×", "✕", "cancel", "done", "x"]
                     elif "app storage" in desc_lower or ("storage" in desc_lower and "app" in desc_lower):
                         # Priority: find "app storage" or "internal storage" (NOT device storage)
                         search_texts = ["app storage", "internal storage", "app", "internal"]
@@ -195,16 +166,157 @@ def execute_action(action):
                     elif "storage" in desc_lower:
                         # Generic storage selection - prefer app/internal over device
                         search_texts = ["app storage", "internal storage", "app", "internal", "storage"]
-                    elif "top-right" in desc_lower or "menu button" in desc_lower or "three dots" in desc_lower or "hamburger" in desc_lower or ("three" in desc_lower and "button" in desc_lower):
-                        # For top-right menu - try to find menu indicators, but use coordinates as fallback
-                        search_texts = ["more", "menu", "options", "settings", "⋮", "☰", "more options"]
-                        # If not found, will use provided coordinates (1000, 100)
+                    elif "create" in desc_lower and "note" in desc_lower:
+                        search_texts = ["create", "note", "new note", "add note", "+", "new"]
+                    elif "tap to create" in desc_lower and "note" in desc_lower:
+                        # For "Tap to create new note" - find create note button
+                        search_texts = ["create", "note", "new note", "add", "+"]
+                    elif "top-right" in desc_lower or "menu button" in desc_lower or "three dots" in desc_lower or "hamburger" in desc_lower or ("three" in desc_lower and "button" in desc_lower and "dot" in desc_lower):
+                        # For top-right menu (three dots) - search XML for "More options" button
+                        # CRITICAL: This must handle everything and return - never fall through to generic search
+                        print(f"  🎯 THREE DOTS MENU DETECTED - Searching for 'More options' button using XML...")
+                        from tools.adb_tools import get_screen_size
+                        import xml.etree.ElementTree as ET
+                        
+                        # Search XML for android.widget.Button with text "More options"
+                        menu_bounds = None
+                        try:
+                            root = dump_ui()
+                            if root:
+                                for node in root.iter("node"):
+                                    node_class = node.attrib.get("class", "")
+                                    node_text = node.attrib.get("text", "").strip()
+                                    # Look for android.widget.Button with text "More options" (case-insensitive)
+                                    if (node_class == "android.widget.Button" and 
+                                        node_text.lower() == "more options"):
+                                        bounds = node.attrib.get("bounds", "")
+                                        if bounds and bounds != "[0,0][0,0]":
+                                            menu_bounds = bounds
+                                            print(f"  ✓ Found 'More options' button via XML: text='{node_text}', bounds={bounds}")
+                                            break
+                        except Exception as e:
+                            print(f"  ⚠️  XML search error: {e}")
+                        
+                        if menu_bounds:
+                            # Parse bounds: [945,154][1042,241] -> center = (994, 197)
+                            import re
+                            bounds_match = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', menu_bounds)
+                            if bounds_match:
+                                x1, y1, x2, y2 = map(int, bounds_match.groups())
+                                tap_x = (x1 + x2) // 2
+                                tap_y = (y1 + y2) // 2
+                                print(f"  ✓ Tapping 'More options' button center at ({tap_x}, {tap_y})")
+                                tap(tap_x, tap_y)
+                                time.sleep(2.0)  # Wait for menu to appear from below
+                                
+                                # After tapping, menu appears from below - scroll up and look for "Print to PDF"
+                                print(f"  📜 Menu opened, scrolling up and searching for 'Print to PDF'...")
+                                
+                                # Take screenshot after menu opens
+                                screenshot_path = take_screenshot(f"menu_opened_{int(time.time())}.png")
+                                
+                                # Search for "Print to PDF" in the menu
+                                found_print_to_pdf = False
+                                try:
+                                    root = dump_ui()
+                                    if root:
+                                        for node in root.iter("node"):
+                                            node_text = node.attrib.get("text", "").strip().lower()
+                                            content_desc = node.attrib.get("content-desc", "").strip().lower()
+                                            if ("print to pdf" in node_text or "export to pdf" in node_text or
+                                                "print to pdf" in content_desc or "export to pdf" in content_desc):
+                                                found_print_to_pdf = True
+                                                print(f"  ✓ Found 'Print to PDF' in menu!")
+                                                break
+                                except Exception as e:
+                                    print(f"  ⚠️  Error searching menu: {e}")
+                                
+                                # If not found, try scrolling up
+                                if not found_print_to_pdf:
+                                    print(f"  ⚠️  'Print to PDF' not found, scrolling up in menu...")
+                                    from tools.adb_tools import get_screen_size
+                                    screen_size = get_screen_size()
+                                    if screen_size:
+                                        width, height = screen_size
+                                        # Swipe up in the menu area (center-right area)
+                                        swipe_x = width // 2
+                                        swipe_y1 = int(height * 0.6)  # Start from middle
+                                        swipe_y2 = int(height * 0.3)  # Swipe up
+                                        swipe(swipe_x, swipe_y1, swipe_x, swipe_y2)
+                                        time.sleep(1.0)
+                                        
+                                        # Search again after scrolling
+                                        try:
+                                            root = dump_ui()
+                                            if root:
+                                                for node in root.iter("node"):
+                                                    node_text = node.attrib.get("text", "").strip().lower()
+                                                    content_desc = node.attrib.get("content-desc", "").strip().lower()
+                                                    if ("print to pdf" in node_text or "export to pdf" in node_text or
+                                                        "print to pdf" in content_desc or "export to pdf" in content_desc):
+                                                        found_print_to_pdf = True
+                                                        print(f"  ✓ Found 'Print to PDF' after scrolling!")
+                                                        break
+                                        except Exception as e:
+                                            print(f"  ⚠️  Error searching menu after scroll: {e}")
+                                
+                                # Take final screenshot
+                                screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                                
+                                if not found_print_to_pdf:
+                                    print(f"  ❌ 'Print to PDF' not found in menu - test will FAIL as expected")
+                                
+                                return {
+                                    "status": "executed",
+                                    "action": action,
+                                    "screenshot": screenshot_path,
+                                    "print_to_pdf_found": found_print_to_pdf
+                                }
+                        
+                        # Fallback to ratio coordinates if XML search failed
+                        print(f"  ⚠️  'More options' button not found via XML, using ratio coordinates...")
+                        screen_size = get_screen_size()
+                        if screen_size:
+                            width, height = screen_size
+                            tap_x = int(width * 0.9)  # 90% from left (top right)
+                            tap_y = int(height * 0.09)  # 9% from top
+                            print(f"  → Using ratio coordinates for three dots menu (top right): ({tap_x}, {tap_y})")
+                            tap(tap_x, tap_y)
+                            time.sleep(2.0)  # Wait for menu to appear
+                            
+                            # Search for Print to PDF after tapping
+                            screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                            return {
+                                "status": "executed",
+                                "action": action,
+                                "screenshot": screenshot_path
+                            }
+                        else:
+                            # Final fallback to default coordinates
+                            print(f"  → Screen size not available, using default top-right coordinates (994, 197)")
+                            tap(994, 197)
+                            time.sleep(2.0)
+                            screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                            return {
+                                "status": "executed",
+                                "action": action,
+                                "screenshot": screenshot_path
+                            }
+                        # All branches above return, so we should never reach here
+                        # But if we do, return to prevent falling through to generic search
+                        print(f"  ⚠️  Unexpected: three dots menu handler didn't return")
+                        screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                        return {
+                            "status": "executed",
+                            "action": action,
+                            "screenshot": screenshot_path
+                        }
                     else:
                         # Extract key words
                         words = [w for w in description.split() if len(w) > 2]
                         search_texts = [w.lower() for w in words[:3]]
                     
-                    # Try to find element by text
+                    # Try to find element by text (only if not "three dots" menu)
                     found = False
                     for search_text in search_texts:
                         bounds = find_element_by_text(search_text)
