@@ -161,8 +161,8 @@
           }
         ],
         "outcome": "Test 1 passed",
-        "timestamp": "2026-01-05T00:15:22.973448",
-        "count": 21
+        "timestamp": "2026-01-05T18:15:56.790287",
+        "count": 27
       },
       {
         "actions": [
@@ -203,8 +203,8 @@
           }
         ],
         "outcome": "Test 1 passed",
-        "timestamp": "2026-01-05T00:04:20.407324",
-        "count": 2
+        "timestamp": "2026-01-05T17:33:42.168218",
+        "count": 3
       }
     ],
     "test_complete:create a new note titled 'meeting notes' and type ": [
@@ -235,8 +235,8 @@
           }
         ],
         "outcome": "Test 2 passed",
-        "timestamp": "2026-01-05T00:17:49.211527",
-        "count": 24
+        "timestamp": "2026-01-05T18:18:20.392443",
+        "count": 30
       }
     ],
     "test_complete:go to settings and verify that the 'appearance' ta": [
@@ -300,6 +300,19 @@
         "actions": [],
         "outcome": "Test 4 correctly failed",
         "timestamp": "2026-01-03T00:05:13.663732",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap three dots menu button (top right) in Meeting Notes to find Print to PDF",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "outcome": "Test 3 correctly failed",
+        "timestamp": "2026-01-05T18:19:08.647760",
         "count": 1
       }
     ]
@@ -670,7 +683,93 @@
           }
         ],
         "reason": "Element not found for 'Tap 'Continue without sync' button' and no valid coordinates provided",
-        "timestamp": "2026-01-03T20:14:26.026883",
+        "timestamp": "2026-01-05T17:48:37.593438",
+        "count": 3
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'App storage' option' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:45:28.846620",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' option",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'App storage' option' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:45:53.748429",
         "count": 1
       }
     ],
@@ -839,14 +938,78 @@
         "timestamp": "2026-01-04T23:46:02.227587",
         "count": 1
       }
+    ],
+    "unknown:open obsidian, create a new vault named 'internvau": [
+      {
+        "actions": [
+          {
+            "action": "open_app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create a vault' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Continue without sync' button",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'App storage' or 'Internal storage' option (not device storage)",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'App storage' or 'Internal storage' option (not device storage)' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:48:12.766020",
+        "count": 2
+      }
+    ],
+    "unknown:create a new note titled 'meeting notes' and type ": [
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Create note' or 'New note' button to create new note",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'Create note' or 'New note' button to create new note' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:52:35.893942",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Create note' or 'New note' button to create new note",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Create note' or 'New note' button to create new note",
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "reason": "Element not found for 'Tap 'Create note' or 'New note' button to create new note' and no valid coordinates provided",
+        "timestamp": "2026-01-05T17:52:56.669314",
+        "count": 1
+      }
     ]
   },
   "action_rewards": {
-    "type": 0.1998972254208236,
-    "open_app": 0.18227412376069502,
-    "tap": 0.1468742307323171,
+    "type": 0.19998611667831867,
+    "open_app": 0.19057974260550758,
+    "tap": 0.13615555877025273,
     "key": 0.020000000000000004,
-    "focus": 0.18404671138462553
+    "focus": 0.19152176834495682
   },
-  "last_updated": "2026-01-05T00:17:49.216808"
+  "last_updated": "2026-01-05T18:19:08.647782"
 }
