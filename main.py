@@ -7,20 +7,43 @@ from agents.planner import plan_next_action
 from agents.executor import execute_action
 from agents.supervisor import verify, compare_with_expected
 from tools.screenshot import ensure_screenshots_dir, take_screenshot
-from tools.adb_tools import reset_app
+from tools.adb_tools import reset_app, dump_ui
 from tools.memory import memory
-from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE
+from tools.benchmark_logger import BenchmarkLogger
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL
+from datetime import datetime
+import xml.etree.ElementTree as ET
 import time
 import os
+import hashlib
 
 
-def run_test_suite():
+def run_test_suite(
+    model: str = None,
+    experiment_id: str = None,
+    trial_num: int = 1,
+    enable_logging: bool = True
+):
     """
     Run all QA tests using step-by-step visual planning
+    
+    Args:
+        model: Model identifier (e.g., "gpt-4o")
+        experiment_id: Experiment identifier
+        trial_num: Trial number
+        enable_logging: Whether to enable benchmark logging
     """
     print("=" * 60)
     print("Obsidian Mobile QA Agent - Visual Planning Test Suite")
     print("=" * 60)
+    
+    # Initialize benchmark logger
+    logger = None
+    if enable_logging:
+        model_name = model or OPENAI_MODEL
+        exp_id = experiment_id or f"bench_v1_{datetime.now().strftime('%Y_%m_%d')}"
+        logger = BenchmarkLogger(experiment_id=exp_id)
+        print(f"📊 Benchmark logging enabled: {exp_id} (model: {model_name}, trial: {trial_num})\n")
     
     # Ensure screenshots directory exists
     ensure_screenshots_dir()
@@ -41,9 +64,16 @@ def run_test_suite():
     reset_app(OBSIDIAN_PACKAGE)
     print("✓ App reset complete\n")
     
+    config = {
+        "max_steps": 20,
+        "temperature": 0.1,
+        "model": OPENAI_MODEL,
+        "enable_logging": enable_logging
+    }
+    
     for test in QA_TESTS:
         print(f"\n{'=' * 60}")
-        print(f"Running Test {test['id']}: {test['text']}")
+        print(f"[TEST ID: {test['id']}] Running Test {test['id']}: {test['text']}")
         print(f"Expected Result: {'PASS' if test['should_pass'] else 'FAIL'}")
         print(f"{'=' * 60}\n")
         
@@ -53,59 +83,162 @@ def run_test_suite():
             "expected": "PASS" if test["should_pass"] else "FAIL"
         }
         
+        # Start run logging
+        run_id = None
+        if logger:
+            model_name = model or OPENAI_MODEL
+            should = "PASS" if test["should_pass"] else "FAIL"
+            run_id = logger.start_run(
+                trial_num=trial_num,
+                model=model_name,
+                test_id=test["id"],
+                should=should,
+                config=config
+            )
+        
         try:
             # Take initial screenshot
             screenshot_path = take_screenshot(f"test_{test['id']}_initial.png")
+            before_screenshot = screenshot_path
             action_history = []
             max_steps = 20  # Prevent infinite loops
             step_count = 0
+            failure_reason = None
             
             print("🔄 Starting step-by-step visual planning loop...\n")
             
             while step_count < max_steps:
                 step_count += 1
-                print(f"--- Step {step_count} ---")
+                print(f"--- [TEST {test['id']}] Step {step_count} ---")
                 
                 # Planner: Analyze screenshot + Android state and decide next action
                 print("📋 Planning next action from screenshot + Android state...")
                 # Pass previous test result to planner (for Test 2 to know Test 1 passed)
-                next_action = plan_next_action(test["text"], screenshot_path, action_history, previous_test_passed=previous_test_passed, test_id=test["id"])
+                # Pass logger to planner for API call tracking
+                next_action = plan_next_action(
+                    test["text"], screenshot_path, action_history,
+                    previous_test_passed=previous_test_passed, test_id=test["id"],
+                    logger=logger
+                )
                 
                 # Log what we're about to do
                 action_type = next_action.get("action", "unknown")
                 description = next_action.get("description", "")
+                subgoal = description
                 print(f"   📱 Android state: {next_action.get('_android_state', {}).get('current_screen', 'unknown')}")
                 
                 if next_action.get("action") == "FAIL":
                     print(f"❌ Planner returned FAIL: {next_action.get('reason', 'Unknown reason')}")
+                    failure_reason = next_action.get("reason", "Planner returned FAIL")
                     test_result["status"] = "FAIL"
-                    test_result["reason"] = next_action.get("reason", "Planner returned FAIL")
+                    test_result["reason"] = failure_reason
+                    if logger:
+                        logger.log_step(
+                            subgoal=subgoal,
+                            action=next_action,
+                            action_source="PLANNER_FAIL",
+                            before_screenshot=before_screenshot,
+                            after_screenshot=screenshot_path,
+                            intended_check=None,
+                            intended_success=False,
+                            error_type="PLANNER_FAIL"
+                        )
                     break
                 
                 if next_action.get("action") == "assert":
                     print("✓ Test goal visually confirmed by planner")
                     # Take final screenshot for supervisor
                     screenshot_path = take_screenshot(f"test_{test['id']}_final.png")
+                    if logger:
+                        logger.log_step(
+                            subgoal=subgoal,
+                            action=next_action,
+                            action_source="ASSERT",
+                            before_screenshot=before_screenshot,
+                            after_screenshot=screenshot_path,
+                            intended_check="TEST_COMPLETE",
+                            intended_success=True
+                        )
                     break
                 
                 # Executor: Execute the action
                 print("🤖 Executing action...")
-                execution_result = execute_action(next_action)
+                before_screenshot = screenshot_path
+                execution_result = execute_action(next_action, logger=logger)
+                
+                # Get action source and intended success from execution result
+                action_source = execution_result.get("action_source", "FALLBACK_COORDS")
+                intended_success = execution_result.get("intended_success", False)
+                intended_check = execution_result.get("intended_check")
                 
                 if execution_result["status"] == "failed":
                     print(f"❌ Execution failed: {execution_result.get('error', execution_result.get('reason', 'Unknown error'))}")
+                    failure_reason = execution_result.get('reason', 'Unknown error')
+                    error_type = execution_result.get("error_type", "EXECUTION_FAILED")
+                    
                     # Record failure in memory for learning
                     context = {
                         "current_screen": next_action.get('_android_state', {}).get('current_screen', 'unknown'),
                         "test_goal": test["text"]
                     }
-                    memory.record_failure(context, action_history + [next_action], execution_result.get('reason', 'Unknown error'))
+                    memory.record_failure(context, action_history + [next_action], failure_reason)
                     memory.update_reward(next_action.get("action", "unknown"), -0.5)  # Negative reward
                     
                     # Don't break immediately - let planner try a different approach
                     # But mark the action as failed in history
                     next_action["_execution_failed"] = True
-                    next_action["_execution_reason"] = execution_result.get('reason', 'Unknown error')
+                    next_action["_execution_reason"] = failure_reason
+                    
+                    # Log failed step
+                    if logger:
+                        ui_xml_path = None
+                        try:
+                            root = dump_ui()
+                            if root:
+                                xml_str = ET.tostring(root, encoding='unicode')
+                                ui_xml_path = f"xml_dumps/step_{step_count}_ui.xml"
+                                os.makedirs("xml_dumps", exist_ok=True)
+                                with open(ui_xml_path, 'w', encoding='utf-8') as f:
+                                    f.write(xml_str)
+                        except:
+                            pass
+                        
+                        logger.log_step(
+                            subgoal=subgoal,
+                            action=next_action,
+                            action_source=action_source,
+                            before_screenshot=before_screenshot,
+                            after_screenshot=screenshot_path,
+                            ui_xml=ui_xml_path,
+                            intended_check=intended_check,
+                            intended_success=False,
+                            error_type=error_type
+                        )
+                else:
+                    # Log successful step
+                    if logger:
+                        ui_xml_path = None
+                        try:
+                            root = dump_ui()
+                            if root:
+                                xml_str = ET.tostring(root, encoding='unicode')
+                                ui_xml_path = f"xml_dumps/step_{step_count}_ui.xml"
+                                os.makedirs("xml_dumps", exist_ok=True)
+                                with open(ui_xml_path, 'w', encoding='utf-8') as f:
+                                    f.write(xml_str)
+                        except:
+                            pass
+                        
+                        logger.log_step(
+                            subgoal=subgoal,
+                            action=next_action,
+                            action_source=action_source,
+                            before_screenshot=before_screenshot,
+                            after_screenshot=execution_result.get("screenshot", screenshot_path),
+                            ui_xml=ui_xml_path,
+                            intended_check=intended_check,
+                            intended_success=intended_success
+                        )
                 
                 # Update screenshot and action history
                 screenshot_path = execution_result.get("screenshot", screenshot_path)
@@ -120,22 +253,36 @@ def run_test_suite():
             if step_count >= max_steps:
                 print(f"⚠️  Reached maximum steps ({max_steps}), taking final screenshot...")
                 screenshot_path = take_screenshot(f"test_{test['id']}_final.png")
+                failure_reason = "MAX_STEPS_REACHED"
             
             # Supervisor: Verify final screenshot
             print("\n🧑‍⚖️ Verifying test result from final screenshot...")
-            verification = verify(test["text"], screenshot_path, test["should_pass"])
+            verification = verify(test["text"], screenshot_path, test["should_pass"], logger=logger)
             verdict = verification.get("verdict", "UNKNOWN")
             reason = verification.get("reason", "No reason provided")
             details = verification.get("details", "")
+            assertions = verification.get("assertions", [])
             
             print(f"Verdict: {verdict}")
             print(f"Reason: {reason}")
             if details:
                 print(f"Details: {details}")
             
+            # Log assertions
+            if logger and assertions:
+                for assertion in assertions:
+                    logger.log_assertion(
+                        assertion_type=assertion.get("type", "unknown"),
+                        expected=assertion.get("expected", ""),
+                        observed=assertion.get("observed", ""),
+                        passed=assertion.get("passed", False),
+                        step_idx=None,  # Final assertion
+                        evidence_path=assertion.get("evidence_path")
+                    )
+            
             # Compare with expected result
             comparison = compare_with_expected(verdict, test["should_pass"])
-            print(f"\n{comparison['message']}")
+            print(f"\n[TEST ID: {test['id']}] {comparison['message']}")
             
             # Record outcome in memory for reinforcement learning
             context = {
@@ -164,10 +311,26 @@ def run_test_suite():
             test_result["steps_taken"] = step_count
             test_result["final_screenshot"] = screenshot_path
             
+            # End run logging
+            if logger:
+                final_status = "PASS" if verdict == "PASS" else "FAIL"
+                logger.end_run(
+                    final_status=final_status,
+                    failure_reason=failure_reason or (reason if verdict == "FAIL" else None)
+                )
+            
         except Exception as e:
             print(f"\n❌ Test execution error: {str(e)}")
             test_result["status"] = "ERROR"
             test_result["error"] = str(e)
+            
+            # End run logging with error
+            if logger:
+                logger.set_crash_detected()
+                logger.end_run(
+                    final_status="FAIL",
+                    failure_reason=f"EXCEPTION: {str(e)}"
+                )
         
         results.append(test_result)
         
@@ -194,7 +357,7 @@ def run_test_suite():
     
     for result in results:
         status_icon = "✓" if result.get("status") == "PASS" else "✗" if result.get("status") == "FAIL" else "⚠"
-        print(f"{status_icon} Test {result['test_id']}: {result.get('status', 'UNKNOWN')} ({result.get('steps_taken', 0)} steps)")
+        print(f"{status_icon} [TEST ID: {result['test_id']}] Test {result['test_id']}: {result.get('status', 'UNKNOWN')} ({result.get('steps_taken', 0)} steps)")
         if result.get("reason"):
             print(f"   {result['reason']}")
     
