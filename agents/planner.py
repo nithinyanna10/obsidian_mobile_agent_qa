@@ -24,13 +24,14 @@ from tools.memory import memory
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-def call_openai_with_retry(messages, max_retries=3, **kwargs):
+def call_openai_with_retry(messages, max_retries=3, logger=None, **kwargs):
     """
     Call OpenAI API with retry logic for rate limits
     
     Args:
         messages: Messages for the API call
         max_retries: Maximum number of retries
+        logger: Optional BenchmarkLogger instance for logging API calls
         **kwargs: Additional arguments for chat.completions.create
     
     Returns:
@@ -38,7 +39,49 @@ def call_openai_with_retry(messages, max_retries=3, **kwargs):
     """
     for attempt in range(max_retries):
         try:
-            return client.chat.completions.create(model=OPENAI_MODEL, messages=messages, **kwargs)
+            response = client.chat.completions.create(model=OPENAI_MODEL, messages=messages, **kwargs)
+            
+            # Log API call if logger provided
+            # CRITICAL: Token counts come from API response, so ONLY screenshots
+            # actually sent to the API are counted. Screenshots taken but not sent = 0 tokens.
+            if logger:
+                tokens_in = 0
+                tokens_out = 0
+                
+                # Extract actual token counts from API response
+                # These are the REAL tokens used by OpenAI, including only screenshots sent in this call
+                if hasattr(response, 'usage') and response.usage:
+                    # Chat Completions API format
+                    if hasattr(response.usage, 'prompt_tokens'):
+                        tokens_in = response.usage.prompt_tokens
+                    elif hasattr(response.usage, 'input_tokens'):
+                        tokens_in = response.usage.input_tokens
+                    
+                    if hasattr(response.usage, 'completion_tokens'):
+                        tokens_out = response.usage.completion_tokens
+                    elif hasattr(response.usage, 'output_tokens'):
+                        tokens_out = response.usage.output_tokens
+                
+                # Count screenshots in this API call
+                screenshots_in_call = 0
+                for msg in messages:
+                    if isinstance(msg.get("content"), list):
+                        for content_item in msg.get("content", []):
+                            if content_item.get("type") == "image_url":
+                                screenshots_in_call += 1
+                
+                # Log with model for cost calculation
+                logger.log_api_call(
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    model=OPENAI_MODEL
+                )
+                
+                # Debug: Show how many screenshots were in this call
+                if screenshots_in_call > 0:
+                    print(f"  📊 API call: {screenshots_in_call} screenshot(s) sent, {tokens_in:,} input tokens, {tokens_out:,} output tokens")
+            
+            return response
         except Exception as e:
             error_str = str(e)
             # Check if it's a rate limit error (429)
@@ -48,7 +91,6 @@ def call_openai_with_retry(messages, max_retries=3, **kwargs):
                     wait_time = 2.0  # Default: 2 seconds
                     if "try again in" in error_str.lower():
                         # Try to extract the wait time from the error message (in milliseconds)
-                        import re
                         match = re.search(r'try again in (\d+)\s*ms', error_str.lower())
                         if match:
                             wait_time_ms = int(match.group(1))
@@ -66,9 +108,26 @@ def call_openai_with_retry(messages, max_retries=3, **kwargs):
                                     wait_time = (wait_time_ms / 1000.0) + 0.5
                     
                     print(f"  ⚠️  Rate limit hit, waiting {wait_time:.2f}s before retry {attempt + 1}/{max_retries}...")
+                    if logger:
+                        logger.set_rate_limit_fail()
+                        # Count this as an API call attempt (rate limited)
+                        logger.log_api_call(
+                            tokens_in=0,
+                            tokens_out=0,
+                            model=OPENAI_MODEL
+                        )
                     time.sleep(wait_time)
                     continue
                 else:
+                    # Still count as API call even if it failed
+                    if logger:
+                        logger.set_rate_limit_fail()
+                        # Log failed call with 0 tokens (usage unavailable on error)
+                        logger.log_api_call(
+                            tokens_in=0,
+                            tokens_out=0,
+                            model=OPENAI_MODEL
+                        )
                     raise  # Last attempt failed, raise the exception
             else:
                 raise  # Not a rate limit error, raise immediately
@@ -117,7 +176,7 @@ def get_android_state():
     return state
 
 
-def plan_next_action(test_text, screenshot_path, action_history, previous_test_passed=False, execution_result=None, test_id=None):
+def plan_next_action(test_text, screenshot_path, action_history, previous_test_passed=False, execution_result=None, test_id=None, logger=None):
     """
     Analyze screenshot + Android state and decide the next single action
     
@@ -378,7 +437,8 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                 root = dump_ui()
                 if root:
                     xml_str = ET.tostring(root, encoding='unicode')
-                    dump_file = f"test{test_id}_step_{int(time.time())}.xml"
+                    os.makedirs("xml_dumps", exist_ok=True)
+                    dump_file = f"xml_dumps/test{test_id}_step_{int(time.time())}.xml"
                     with open(dump_file, 'w', encoding='utf-8') as f:
                         f.write(xml_str)
                     print(f"  ✓ UI XML dump saved to: {dump_file}")
@@ -622,6 +682,7 @@ If you see Settings screen elements, return {"in_settings": true}. Otherwise {"i
                                 }
                             ],
                             max_tokens=100,
+                            logger=logger,
                             temperature=0.1
                         )
                         
@@ -638,7 +699,8 @@ If you see Settings screen elements, return {"in_settings": true}. Otherwise {"i
                                     root = dump_ui()
                                     if root:
                                         xml_str = ET.tostring(root, encoding='unicode')
-                                        dump_file = f"settings_ui_dump_{int(time.time())}.xml"
+                                        os.makedirs("xml_dumps", exist_ok=True)
+                                        dump_file = f"xml_dumps/settings_ui_dump_{int(time.time())}.xml"
                                         with open(dump_file, 'w', encoding='utf-8') as f:
                                             f.write(xml_str)
                                         print(f"  ✓ UI XML dump saved to: {dump_file}")
@@ -832,6 +894,7 @@ Output ONLY valid JSON, no markdown:"""
                         }
                     ],
                     temperature=0.1,
+                    logger=logger,
                     max_tokens=100
                 )
                 
@@ -1015,6 +1078,7 @@ Output ONLY valid JSON, no markdown:"""
                                     }
                                 ],
                                 temperature=0.1,
+                                logger=logger,
                                 max_tokens=100
                             )
                             
@@ -1233,6 +1297,7 @@ Output ONLY valid JSON, no markdown:"""
                             }
                         ],
                         temperature=0.1,
+                        logger=logger,
                         max_tokens=100
                     )
                     

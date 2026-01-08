@@ -13,23 +13,27 @@ from PIL import Image
 import base64
 import io
 import json
+import os
 import re
 import time
 
 
-def execute_action(action):
+def execute_action(action, logger=None):
     """
     Execute exactly ONE action
     Uses UIAutomator to find real coordinates if LLM gives generic ones
     
     Args:
         action: Dictionary with action type and parameters
+        logger: Optional BenchmarkLogger instance for logging
     
     Returns:
-        Dictionary with execution status and screenshot path
+        Dictionary with execution status, screenshot path, action_source, and intended_success
     """
     action_type = action.get("action", "").lower()
     description = action.get("description", "")
+    action_source = "FALLBACK_COORDS"  # Default, will be updated based on how element was found
+    intended_success = False  # Will be updated based on execution result
     
     try:
         if action_type == "tap":
@@ -60,7 +64,8 @@ def execute_action(action):
                             root = dump_ui()
                             if root:
                                 xml_str = ET.tostring(root, encoding='unicode')
-                                dump_file = f"settings_ui_dump_{int(time.time())}.xml"
+                                os.makedirs("xml_dumps", exist_ok=True)
+                                dump_file = f"xml_dumps/settings_ui_dump_{int(time.time())}.xml"
                                 with open(dump_file, 'w', encoding='utf-8') as f:
                                     f.write(xml_str)
                                 print(f"  ✓ UI XML dump saved to: {dump_file}")
@@ -74,14 +79,20 @@ def execute_action(action):
                         if appearance_bounds:
                             tap_x, tap_y = bounds_to_center(appearance_bounds)
                             if tap_x and tap_y:
+                                action_source = "XML"
                                 print(f"  ✓ Found 'Appearance' tab via XML at ({tap_x}, {tap_y})")
                                 tap(tap_x, tap_y)
                                 time.sleep(1.5)
                                 screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                                # Check if we're in Appearance screen (intended success)
+                                ui_text_check = get_ui_text()
+                                intended_success = ui_text_check and any("appearance" in t.lower() for t in ui_text_check)
                                 return {
                                     "status": "executed",
                                     "action": action,
-                                    "screenshot": screenshot_path
+                                    "screenshot": screenshot_path,
+                                    "action_source": action_source,
+                                    "intended_success": intended_success
                                 }
                         
                         # If XML search failed, use ratio coordinates (0.29W, 0.385H)
@@ -176,7 +187,6 @@ def execute_action(action):
                         # CRITICAL: This must handle everything and return - never fall through to generic search
                         print(f"  🎯 THREE DOTS MENU DETECTED - Searching for 'More options' button using XML...")
                         from tools.adb_tools import get_screen_size
-                        import xml.etree.ElementTree as ET
                         
                         # Search XML for android.widget.Button with text "More options"
                         menu_bounds = None
@@ -199,7 +209,6 @@ def execute_action(action):
                         
                         if menu_bounds:
                             # Parse bounds: [945,154][1042,241] -> center = (994, 197)
-                            import re
                             bounds_match = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', menu_bounds)
                             if bounds_match:
                                 x1, y1, x2, y2 = map(int, bounds_match.groups())
@@ -653,7 +662,8 @@ def execute_action(action):
                 if root:
                     xml_str = ET.tostring(root, encoding='unicode')
                     # Save to file for analysis
-                    dump_file = f"sidebar_ui_dump_{int(time.time())}.xml"
+                    os.makedirs("xml_dumps", exist_ok=True)
+                    dump_file = f"xml_dumps/sidebar_ui_dump_{int(time.time())}.xml"
                     with open(dump_file, 'w', encoding='utf-8') as f:
                         f.write(xml_str)
                     print(f"  ✓ UI XML dump saved to: {dump_file}")
