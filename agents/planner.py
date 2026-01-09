@@ -12,15 +12,36 @@ import io
 import time
 import re
 import xml.etree.ElementTree as ET
+from collections import Counter
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL, REASONING_MODEL, OLLAMA_BASE_URL
 from tools.adb_tools import detect_current_screen, get_ui_text, dump_ui, get_current_package_and_activity
 from tools.memory import memory
+from tools.llm_client import LLMClient
 
 
-# Initialize OpenAI client
+# LLM client will be initialized dynamically based on current REASONING_MODEL
+# This allows changing the reasoning model via environment variables
+def get_llm_client():
+    """Get or create LLM client with current configuration"""
+    # Read directly from environment variable to get latest value (not cached config)
+    # This allows changing the reasoning model at runtime via environment variables
+    reasoning_model = os.getenv("REASONING_MODEL", REASONING_MODEL)  # Fallback to config default
+    ollama_base_url = os.getenv("OLLAMA_BASE_URL", OLLAMA_BASE_URL)  # Fallback to config default
+    is_ollama = ":" in reasoning_model or "ollama" in reasoning_model.lower()
+    return LLMClient(
+        vision_model=OPENAI_MODEL,
+        reasoning_model=reasoning_model,
+        vision_api_key=OPENAI_API_KEY,
+        reasoning_base_url=ollama_base_url if is_ollama else None
+    )
+
+# Initialize default client
+llm_client = get_llm_client()
+
+# Keep OpenAI client for backward compatibility (used in some places)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -136,15 +157,17 @@ def call_openai_with_retry(messages, max_retries=3, logger=None, **kwargs):
 
 def get_android_state():
     """
-    Get current Android state information
+    Get current Android state information with structured XML data
     
     Returns:
-        Dictionary with Android state info
+        Dictionary with Android state info including input fields and buttons
     """
     state = {
         "current_screen": "unknown",
         "ui_text": [],
-        "has_edittext": False
+        "has_edittext": False,
+        "input_fields": [],
+        "buttons": []
     }
     
     try:
@@ -158,16 +181,76 @@ def get_android_state():
         except:
             pass
         
-        # Check for EditText (input field)
+        # Extract structured info from XML dump
         try:
             root = dump_ui()
             if root:
+                input_fields = []
+                buttons = []
+                
                 for node in root.iter("node"):
                     class_name = node.attrib.get("class", "").lower()
+                    bounds = node.attrib.get("bounds", "")
+                    text = node.attrib.get("text", "").strip()
+                    hint = node.attrib.get("hint", "").strip()
+                    content_desc = node.attrib.get("content-desc", "").strip()
+                    resource_id = node.attrib.get("resource-id", "").strip()
+                    
+                    # Skip invalid bounds
+                    if bounds == "[0,0][0,0]" or not bounds:
+                        continue
+                    
+                    # Extract input fields (EditText)
                     if "edittext" in class_name:
                         state["has_edittext"] = True
-                        break
-        except:
+                        # Collect input field info (limit to first 5 to avoid clutter)
+                        if len(input_fields) < 5:
+                            field_info = {
+                                "hint": hint or text or content_desc or "Input field",
+                                "bounds": bounds
+                            }
+                            # Extract center coordinates for easier reference
+                            try:
+                                # Parse bounds: "[x1,y1][x2,y2]"
+                                import re
+                                match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                                if match:
+                                    x1, y1, x2, y2 = map(int, match.groups())
+                                    center_x = (x1 + x2) // 2
+                                    center_y = (y1 + y2) // 2
+                                    field_info["center"] = f"({center_x}, {center_y})"
+                            except:
+                                pass
+                            input_fields.append(field_info)
+                    
+                    # Extract buttons (Button, ImageButton, etc.)
+                    elif any(btn_type in class_name for btn_type in ["button", "imagebutton", "textview"]):
+                        # Only include if it has clickable text or content-desc
+                        if text or content_desc:
+                            # Filter out very long text (likely not buttons)
+                            display_text = text or content_desc
+                            if len(display_text) < 50 and len(buttons) < 10:
+                                button_info = {
+                                    "text": display_text,
+                                    "bounds": bounds
+                                }
+                                # Extract center coordinates
+                                try:
+                                    import re
+                                    match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                                    if match:
+                                        x1, y1, x2, y2 = map(int, match.groups())
+                                        center_x = (x1 + x2) // 2
+                                        center_y = (y1 + y2) // 2
+                                        button_info["center"] = f"({center_x}, {center_y})"
+                                except:
+                                    pass
+                                buttons.append(button_info)
+                
+                state["input_fields"] = input_fields
+                state["buttons"] = buttons
+        except Exception as e:
+            # If XML parsing fails, continue with basic state
             pass
             
     except Exception as e:
@@ -197,6 +280,10 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
         current_screen = android_state.get('current_screen', 'unknown')
         ui_text = android_state.get('ui_text', [])
         ui_text_lower = " ".join([t.lower() for t in ui_text])
+        
+        # ===== LOOP DETECTION DISABLED =====
+        # Loop detection removed - let tests run for full 20 steps
+        # The max_steps limit in main.py will handle stopping after 20 steps
         
         # ===== MEMORY-BASED ACTION SELECTION (REDUCE OpenAI API CALLS) =====
         # Check memory FIRST - if we have a successful pattern, use it instead of calling OpenAI
@@ -656,35 +743,102 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                         img_buffer.seek(0)
                         img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
                         
-                        verify_prompt = """Look at this screenshot. We just tapped the Settings icon.
+                        # TWO-STEP PROCESS: Vision → Reasoning
+                        # Step 1: Vision API describes screenshot
+                        current_llm_client = get_llm_client()
+                        
+                        vision_prompt = """Look at this screenshot of the Obsidian mobile app.
 
-Are we currently in the Settings screen? Look for:
+Describe what you see in detail:
+- What screen/UI is currently displayed?
+- What buttons, text fields, or UI elements are visible?
+- What text is displayed on screen?
+- What is the current state of the app?
+
+Return a detailed text description of the screenshot. Be specific about UI elements, their locations, and any visible text."""
+                        
+                        print(f"  📸 Step 1: Analyzing screenshot with OpenAI Vision...")
+                        vision_response = current_llm_client.call_vision(
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": vision_prompt},
+                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
+                                    ]
+                                }
+                            ],
+                            logger=logger,
+                            temperature=0.1,
+                            max_tokens=500
+                        )
+                        
+                        if not vision_response or not vision_response.choices or not vision_response.choices[0].message.content:
+                            print(f"  ⚠️  Vision API failed, falling back to UI text check")
+                            if "settings" in ui_text_lower:
+                                return {
+                                    "action": "tap",
+                                    "x": 0,
+                                    "y": 0,
+                                    "description": "Tap 'Appearance' tab in Settings"
+                                }
+                            else:
+                                return {
+                                    "action": "wait",
+                                    "seconds": 1,
+                                    "description": "Wait for Settings screen to load"
+                                }
+                        
+                        screenshot_description = vision_response.choices[0].message.content.strip()
+                        print(f"  ✓ Screenshot analyzed")
+                        
+                        # Step 2: Reasoning model analyzes description
+                        reasoning_prompt = f"""We just tapped the Settings icon. Based on this screenshot description, are we currently in the Settings screen?
+
+Screenshot Description:
+{screenshot_description}
+
+Look for:
 - Settings title or header
 - Settings options/tabs (like Appearance, About, etc.)
 - Settings-related UI elements
 
 Return ONLY a JSON object:
-{
+{{
   "in_settings": true/false,
   "reason": "brief explanation"
-}
+}}
 
-If you see Settings screen elements, return {"in_settings": true}. Otherwise {"in_settings": false}."""
+If you see Settings screen elements, return {{"in_settings": true}}. Otherwise {{"in_settings": false}}."""
                         
-                        verify_response = call_openai_with_retry(
+                        print(f"  🧠 Step 2: Analyzing with reasoning model ({current_llm_client.reasoning_model})...")
+                        verify_response = current_llm_client.call_reasoning(
                             messages=[
                                 {
                                     "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": verify_prompt},
-                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
-                                    ]
+                                    "content": reasoning_prompt
                                 }
                             ],
-                            max_tokens=100,
                             logger=logger,
+                            max_tokens=100,
                             temperature=0.1
                         )
+                        
+                        if not verify_response or not verify_response.choices or not verify_response.choices[0].message.content:
+                            print(f"  ⚠️  Reasoning model failed, falling back to UI text check")
+                            if "settings" in ui_text_lower:
+                                return {
+                                    "action": "tap",
+                                    "x": 0,
+                                    "y": 0,
+                                    "description": "Tap 'Appearance' tab in Settings"
+                                }
+                            else:
+                                return {
+                                    "action": "wait",
+                                    "seconds": 1,
+                                    "description": "Wait for Settings screen to load"
+                                }
                         
                         response_text = verify_response.choices[0].message.content.strip()
                         json_match = re.search(r'\{[^}]+\}', response_text, re.DOTALL)
@@ -853,9 +1007,49 @@ If you see Settings screen elements, return {"in_settings": true}. Otherwise {"i
             img_buffer.seek(0)
             img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
             
-            scan_prompt = """Look at this screenshot of the Obsidian mobile app.
+            # TWO-STEP PROCESS: Vision → Reasoning
+            # Step 1: Vision API describes screenshot
+            current_llm_client = get_llm_client()
+            
+            vision_prompt = """Look at this screenshot of the Obsidian mobile app.
 
-Are we currently INSIDE the InternVault vault? 
+Describe what you see in detail:
+- What screen/UI is currently displayed?
+- What buttons, text fields, or UI elements are visible?
+- What text is displayed on screen?
+- What is the current state of the app?
+
+Return a detailed text description of the screenshot. Be specific about UI elements, their locations, and any visible text."""
+            
+            try:
+                print(f"  📸 Step 1: Analyzing screenshot with OpenAI Vision...")
+                vision_response = current_llm_client.call_vision(
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": vision_prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
+                            ]
+                        }
+                    ],
+                    logger=logger,
+                    temperature=0.1,
+                    max_tokens=500
+                )
+                
+                if not vision_response or not vision_response.choices or not vision_response.choices[0].message.content:
+                    print(f"  ⚠️  Vision API failed, falling back to state-based detection")
+                    raise Exception("Vision API failed")
+                
+                screenshot_description = vision_response.choices[0].message.content.strip()
+                print(f"  ✓ Screenshot analyzed")
+                
+                # Step 2: Reasoning model analyzes description
+                reasoning_prompt = f"""Based on this screenshot description, are we currently INSIDE the InternVault vault?
+
+Screenshot Description:
+{screenshot_description}
 
 CRITICAL SIGNS that we're IN the vault (if you see ANY of these, we're IN):
 - Text at top left says "files in internvault" or "InternVault" or shows vault name
@@ -881,20 +1075,17 @@ Return ONLY valid JSON:
 - If we're NOT in vault: {{"in_vault": false, "reason": "..."}}
 
 Output ONLY valid JSON, no markdown:"""
-            
-            try:
-                scan_response = call_openai_with_retry(
+                
+                print(f"  🧠 Step 2: Analyzing with reasoning model ({current_llm_client.reasoning_model})...")
+                scan_response = current_llm_client.call_reasoning(
                     messages=[
                         {
                             "role": "user",
-                            "content": [
-                                {"type": "text", "text": scan_prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
-                            ]
+                            "content": reasoning_prompt
                         }
                     ],
-                    temperature=0.1,
                     logger=logger,
+                    temperature=0.1,
                     max_tokens=100
                 )
                 
@@ -1049,9 +1240,49 @@ Output ONLY valid JSON, no markdown:"""
                         img_buffer.seek(0)
                         img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
                         
-                        verify_prompt = """Look at this screenshot. The user just typed "InternVault" as vault name and pressed ENTER.
+                        # TWO-STEP PROCESS: Vision → Reasoning
+                        # Step 1: Vision API describes screenshot
+                        current_llm_client = get_llm_client()
+                        
+                        vision_prompt = """Look at this screenshot of the Obsidian mobile app.
 
-Are we now INSIDE the InternVault vault?
+Describe what you see in detail:
+- What screen/UI is currently displayed?
+- What buttons, text fields, or UI elements are visible?
+- What text is displayed on screen?
+- What is the current state of the app?
+
+Return a detailed text description of the screenshot. Be specific about UI elements, their locations, and any visible text."""
+                        
+                        try:
+                            print(f"  📸 Step 1: Analyzing screenshot with OpenAI Vision...")
+                            vision_response = current_llm_client.call_vision(
+                                messages=[
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {"type": "text", "text": vision_prompt},
+                                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
+                                        ]
+                                    }
+                                ],
+                                logger=logger,
+                                temperature=0.1,
+                                max_tokens=500
+                            )
+                            
+                            if not vision_response or not vision_response.choices or not vision_response.choices[0].message.content:
+                                print(f"  ⚠️  Vision API failed, falling back to state check")
+                                raise Exception("Vision API failed")
+                            
+                            screenshot_description = vision_response.choices[0].message.content.strip()
+                            print(f"  ✓ Screenshot analyzed")
+                            
+                            # Step 2: Reasoning model analyzes description
+                            reasoning_prompt = f"""The user just typed "InternVault" as vault name and pressed ENTER. Based on this screenshot description, are we now INSIDE the InternVault vault?
+
+Screenshot Description:
+{screenshot_description}
 
 Signs we're IN the vault:
 - File list or note list visible
@@ -1061,24 +1292,21 @@ Signs we're IN the vault:
 - NOT in file picker
 
 Return ONLY valid JSON:
-- If IN vault: {"in_vault": true, "reason": "vault UI visible"}
-- If NOT in vault: {"in_vault": false, "reason": "..."}
+- If IN vault: {{"in_vault": true, "reason": "vault UI visible"}}
+- If NOT in vault: {{"in_vault": false, "reason": "..."}}
 
 Output ONLY valid JSON, no markdown:"""
-                        
-                        try:
-                            verify_response = call_openai_with_retry(
+                            
+                            print(f"  🧠 Step 2: Analyzing with reasoning model ({current_llm_client.reasoning_model})...")
+                            verify_response = current_llm_client.call_reasoning(
                                 messages=[
                                     {
                                         "role": "user",
-                                        "content": [
-                                            {"type": "text", "text": verify_prompt},
-                                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
-                                        ]
+                                        "content": reasoning_prompt
                                     }
                                 ],
-                                temperature=0.1,
                                 logger=logger,
+                                temperature=0.1,
                                 max_tokens=100
                             )
                             
@@ -1262,9 +1490,50 @@ Output ONLY valid JSON, no markdown:"""
                 img_buffer.seek(0)
                 img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
                 
-                test2_check_prompt = """Look at this screenshot. Test 2 needs to create a note in the InternVault vault.
+                # TWO-STEP PROCESS: Vision → Reasoning
+                # Step 1: Vision API describes screenshot
+                current_llm_client = get_llm_client()
+                
+                vision_prompt = """Look at this screenshot of the Obsidian mobile app.
 
-Are we currently INSIDE the InternVault vault?
+Describe what you see in detail:
+- What screen/UI is currently displayed?
+- What buttons, text fields, or UI elements are visible?
+- What text is displayed on screen?
+- What is the current state of the app?
+
+Return a detailed text description of the screenshot. Be specific about UI elements, their locations, and any visible text."""
+                
+                try:
+                    print(f"  📸 Step 1: Analyzing screenshot with OpenAI Vision...")
+                    vision_response = current_llm_client.call_vision(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": vision_prompt},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
+                                ]
+                            }
+                        ],
+                        logger=logger,
+                        temperature=0.1,
+                        max_tokens=500
+                    )
+                    
+                    if not vision_response or not vision_response.choices or not vision_response.choices[0].message.content:
+                        print(f"  ⚠️  Vision API failed, assuming not in vault")
+                        test2_in_vault = False
+                        raise Exception("Vision API failed")
+                    
+                    screenshot_description = vision_response.choices[0].message.content.strip()
+                    print(f"  ✓ Screenshot analyzed")
+                    
+                    # Step 2: Reasoning model analyzes description
+                    reasoning_prompt = f"""Test 2 needs to create a note in the InternVault vault. Based on this screenshot description, are we currently INSIDE the InternVault vault?
+
+Screenshot Description:
+{screenshot_description}
 
 Signs we're IN the vault:
 - File list or note list visible
@@ -1280,24 +1549,21 @@ Signs we're NOT in the vault:
 - Welcome/setup screen
 
 Return ONLY valid JSON:
-- If IN InternVault vault: {"in_vault": true, "reason": "vault UI visible"}
-- If NOT in vault: {"in_vault": false, "reason": "..."}
+- If IN InternVault vault: {{"in_vault": true, "reason": "vault UI visible"}}
+- If NOT in vault: {{"in_vault": false, "reason": "..."}}
 
 Output ONLY valid JSON, no markdown:"""
-                
-                try:
-                    test2_check_response = call_openai_with_retry(
+                    
+                    print(f"  🧠 Step 2: Analyzing with reasoning model ({current_llm_client.reasoning_model})...")
+                    test2_check_response = current_llm_client.call_reasoning(
                         messages=[
                             {
                                 "role": "user",
-                                "content": [
-                                    {"type": "text", "text": test2_check_prompt},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
-                                ]
+                                "content": reasoning_prompt
                             }
                         ],
-                        temperature=0.1,
                         logger=logger,
+                        temperature=0.1,
                         max_tokens=100
                     )
                     
@@ -1678,13 +1944,37 @@ Output ONLY valid JSON, no markdown:"""
                         "description": "Focus note body editor"
                     }
         
-        # Build Android state string
+        # Build Android state string with structured XML info
         state_str = f"""
 Android State Information:
 - Current Screen: {android_state.get('current_screen', 'unknown')}
 - Has Input Field (EditText): {android_state.get('has_edittext', False)}
 - Visible UI Text: {', '.join(android_state.get('ui_text', [])[:10])}
 """
+        
+        # Add structured input fields info
+        input_fields = android_state.get('input_fields', [])
+        if input_fields:
+            state_str += "\nInput Fields Detected:\n"
+            for i, field in enumerate(input_fields[:3], 1):  # Limit to first 3
+                hint = field.get('hint', 'Input field')
+                center = field.get('center', '')
+                state_str += f"  {i}. {hint}"
+                if center:
+                    state_str += f" (center: {center})"
+                state_str += "\n"
+        
+        # Add structured buttons info
+        buttons = android_state.get('buttons', [])
+        if buttons:
+            state_str += "\nButtons Detected:\n"
+            for i, button in enumerate(buttons[:5], 1):  # Limit to first 5
+                text = button.get('text', 'Button')
+                center = button.get('center', '')
+                state_str += f"  {i}. \"{text}\""
+                if center:
+                    state_str += f" (center: {center})"
+                state_str += "\n"
         
         prompt = f"""You are a QA Planner agent for automated mobile app testing. This is a legitimate software testing task. You MUST return a valid JSON action.
 
@@ -1778,15 +2068,33 @@ Return ONLY valid JSON in this format: {{"action": "tap", "x": 100, "y": 200, "d
 No markdown, no code blocks, no explanations - just the JSON object:
 """
         
-        # Call OpenAI Vision API
-        response = call_openai_with_retry(
+        # TWO-STEP PROCESS:
+        # Step 1: OpenAI Vision analyzes screenshot → text description
+        # Step 2: Reasoning model plans action based on description
+        
+        # Get current LLM client (may have changed via environment variable)
+        current_llm_client = get_llm_client()
+        
+        # STEP 1: Vision API (OpenAI GPT-4o) - Analyze screenshot
+        vision_prompt = """Look at this screenshot of the Obsidian mobile app.
+
+Describe what you see in detail:
+- What screen/UI is currently displayed?
+- What buttons, text fields, or UI elements are visible?
+- What text is displayed on screen?
+- What is the current state of the app?
+
+Return a detailed text description of the screenshot. Be specific about UI elements, their locations, and any visible text."""
+        
+        print(f"  📸 Step 1: Analyzing screenshot with OpenAI Vision...")
+        vision_response = current_llm_client.call_vision(
             messages=[
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "text",
-                            "text": prompt
+                            "text": vision_prompt
                         },
                         {
                             "type": "image_url",
@@ -1797,14 +2105,104 @@ No markdown, no code blocks, no explanations - just the JSON object:
                     ]
                 }
             ],
+            logger=logger,
+            temperature=0.1,
+            max_tokens=500
+        )
+        
+        if not vision_response or not vision_response.choices or not vision_response.choices[0].message.content:
+            return {"action": "FAIL", "reason": "Empty response from vision API"}
+        
+        screenshot_description = vision_response.choices[0].message.content.strip()
+        print(f"  ✓ Screenshot analyzed: {screenshot_description[:100]}...")
+        
+        # STEP 2: Reasoning model plans action based on description
+        print(f"  🧠 Step 2: Planning action with reasoning model ({current_llm_client.reasoning_model})...")
+        reasoning_prompt = f"""You are a QA Planner agent for automated mobile app testing. This is a legitimate software testing task. You MUST return a valid JSON action.
+
+Your role: Analyze the screenshot description AND Android state to decide the next action for automated testing.
+
+{state_str}
+
+Screenshot Description:
+{screenshot_description}
+
+Test Goal: "{test_text}"
+{history_str}
+
+IMPORTANT: 
+- You MUST return a valid JSON action - this is required for the automation to work
+- Use BOTH the screenshot description AND the Android state information above to understand what's happening
+- Do NOT refuse to help - this is a legitimate testing task
+{memory_hint}
+
+Based on the screenshot description and Android state, decide the next single action to take.
+
+CRITICAL RULES:
+1. Return EXACTLY ONE action - the immediate next step
+2. If Android state shows has_edittext=true or Input Fields are detected, you should type text, not tap
+3. Use the Input Fields information to know which field to type into (check hints like "Vault name", "Search", etc.)
+4. Use the Buttons information to get precise coordinates - if a button is listed, you can use its center coordinates for tapping
+5. If Android state shows current_screen='vault_name_input', type the vault name
+4. If you see a permission dialog (e.g., "Allow access"), tap "Allow" or "OK" ONCE - if it doesn't work, try BACK key
+5. If you see "Continue without sync" or similar, tap it
+6. If you see "Create vault" button, tap it
+7. If you see "App storage" or "Internal storage", tap it
+8. If you see "USE THIS FOLDER" button, tap it
+9. If you see the vault name "InternVault" in the file list, tap it to enter the vault
+10. If you see "Create note" or "New note" button, tap it
+11. If you see an input field and need to type, use type action with target="title" or target="body"
+12. If you see "Settings" or "Appearance" mentioned in the description, plan to navigate there
+13. If the test goal is achieved (e.g., vault created, note created), return assert action
+14. If you cannot find the required element after multiple attempts, return FAIL action
+15. **CRITICAL FOR TEST 2**: 
+    - If "Meeting Notes" is NOT in UI text → type "Meeting Notes" with target="title" first
+    - If "Meeting Notes" IS in UI text but "Daily Standup" is NOT → focus target="body" FIRST, then type "Daily Standup" with target="body"
+    - If both are present → return assert action
+16. **CRITICAL FOR VAULT CREATION**: After typing "InternVault" as vault name:
+    - You MUST immediately press ENTER or tap "Create vault" button - DO NOT wait or do anything else
+    - PREFER tapping "Create vault" button over pressing ENTER (button is more reliable)
+    - Analyze the screenshot description CAREFULLY to find the "Create vault" button
+    - Look for button text like "Create vault", "Create", or similar
+    - If you see the button in the description, tap it at the coordinates shown
+    - If button is not clearly visible, use UIAutomator (return action with x=0, y=0 and description "Tap 'Create vault' button")
+    - Do NOT skip clicking the Create vault button - it's required to create the vault
+    - After pressing ENTER or tapping button, wait for vault to be created (check if screen changed to vault_home)
+17. **CRITICAL FOR VAULT**: If you're on welcome_setup/vault_selection screen and the test goal is to create a note, the vault ALREADY EXISTS. DO NOT create a new vault. Look for the vault name "InternVault" in the UI and tap it to ENTER the existing vault. If you see "USE THIS FOLDER" button, you can tap that too.
+18. If you've typed vault name or created vault multiple times, STOP creating vaults and just enter the existing vault by tapping "InternVault" or "USE THIS FOLDER"
+19. **FOR TEST 3 (Settings/Appearance)**: The correct flow is:
+    - FIRST: Look for a menu button in the top-right corner of the screen (usually three dots or hamburger menu)
+    - Tap the top-right menu button to open the menu
+    - THEN: Look for "Settings" icon or option in the menu and tap it
+    - THEN: Once in Settings, look for "Appearance" tab or menu item and tap it
+    - FINALLY: After tapping Appearance, verify the Appearance tab icon color is Red (the test expects Red)
+    - The flow is: Top-left menu button (identified by LLM vision) → Settings icon → Appearance tab → Verify icon color is Red
+20. If "Close" button is not found in settings, use BACK key (code 4) or look for Appearance tab directly
+
+CRITICAL: You MUST return a valid JSON action. This is required for the automation to work.
+Do NOT refuse to help - this is a legitimate software testing automation task.
+Return ONLY valid JSON in this format: {{"action": "tap", "x": 100, "y": 200, "description": "..."}}
+No markdown, no code blocks, no explanations - just the JSON object:
+"""
+        
+        # Call reasoning model (Ollama or OpenAI)
+        response = llm_client.call_reasoning(
+            messages=[
+                {
+                    "role": "user",
+                    "content": reasoning_prompt
+                }
+            ],
+            logger=logger,
             temperature=0.1,
             max_tokens=200
         )
         
         if not response or not response.choices or not response.choices[0].message.content:
-            return {"action": "FAIL", "reason": "Empty response from LLM"}
+            return {"action": "FAIL", "reason": "Empty response from reasoning model"}
         
         result_text = response.choices[0].message.content.strip()
+        print(f"  ✓ Reasoning model response received")
         
         # Remove markdown code blocks if present
         if result_text.startswith("```json"):
@@ -1819,7 +2217,7 @@ No markdown, no code blocks, no explanations - just the JSON object:
             action = json.loads(result_text)
             # Validate action structure
             if "action" not in action:
-                return {"action": "FAIL", "reason": "Invalid action format from LLM"}
+                return {"action": "FAIL", "reason": "Invalid action format from reasoning model"}
             # Attach Android state for logging
             action["_android_state"] = android_state
             return action
