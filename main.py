@@ -10,7 +10,7 @@ from tools.screenshot import ensure_screenshots_dir, take_screenshot
 from tools.adb_tools import reset_app, dump_ui
 from tools.memory import memory
 from tools.benchmark_logger import BenchmarkLogger
-from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL, REASONING_MODEL
 from datetime import datetime
 import xml.etree.ElementTree as ET
 import time
@@ -40,10 +40,15 @@ def run_test_suite(
     # Initialize benchmark logger
     logger = None
     if enable_logging:
-        model_name = model or OPENAI_MODEL
+        # Use reasoning model if provided, otherwise default
+        reasoning_model = model or REASONING_MODEL or OPENAI_MODEL
+        vision_model = OPENAI_MODEL  # Always OpenAI for vision
         exp_id = experiment_id or f"bench_v1_{datetime.now().strftime('%Y_%m_%d')}"
         logger = BenchmarkLogger(experiment_id=exp_id)
-        print(f"📊 Benchmark logging enabled: {exp_id} (model: {model_name}, trial: {trial_num})\n")
+        print(f"📊 Benchmark logging enabled: {exp_id}")
+        print(f"   Vision Model: {vision_model} (OpenAI)")
+        print(f"   Reasoning Model: {reasoning_model}")
+        print(f"   Trial: {trial_num}\n")
     
     # Ensure screenshots directory exists
     ensure_screenshots_dir()
@@ -90,10 +95,12 @@ def run_test_suite(
             should = "PASS" if test["should_pass"] else "FAIL"
             run_id = logger.start_run(
                 trial_num=trial_num,
-                model=model_name,
+                model=reasoning_model,  # Store reasoning model as the main model
                 test_id=test["id"],
                 should=should,
-                config=config
+                config=config,
+                reasoning_model=reasoning_model,
+                vision_model=vision_model
             )
         
         try:
