@@ -2,4 +2,7 @@ openai
 pillow
 opencv-python
 numpy
+requests
+matplotlib
+seaborn
 

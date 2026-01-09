@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime
 from typing import Optional, Dict, Any
 from .benchmark_db import BenchmarkDB
-from config import OPENAI_MODEL, OPENAI_API_KEY
+from config import OPENAI_MODEL, OPENAI_API_KEY, REASONING_MODEL
 from .pricing import calculate_cost
 
 
@@ -32,7 +32,9 @@ class BenchmarkLogger:
         model: str,
         test_id: int,
         should: str,
-        config: Dict[str, Any]
+        config: Dict[str, Any],
+        reasoning_model: Optional[str] = None,
+        vision_model: Optional[str] = None
     ) -> str:
         """Start a new test run"""
         self.current_run_id = str(uuid.uuid4())
@@ -46,10 +48,18 @@ class BenchmarkLogger:
         self.rate_limit_fail = False
         
         # Determine LLM providers/models
-        reasoning_llm_provider = "openai" if OPENAI_API_KEY else "unknown"
-        reasoning_llm_model = OPENAI_MODEL
-        vision_llm_provider = "openai" if OPENAI_API_KEY else "unknown"
-        vision_llm_model = OPENAI_MODEL
+        # Vision: Always OpenAI GPT-4o
+        vision_llm_provider = "openai"
+        vision_llm_model = vision_model or OPENAI_MODEL
+        
+        # Reasoning: Configurable (can be OpenAI or Ollama)
+        reasoning_model_name = reasoning_model or model or REASONING_MODEL or OPENAI_MODEL
+        if "ollama" in reasoning_model_name.lower() or ":" in reasoning_model_name:
+            reasoning_llm_provider = "ollama"
+            reasoning_llm_model = reasoning_model_name
+        else:
+            reasoning_llm_provider = "openai"
+            reasoning_llm_model = reasoning_model_name
         
         self.db.start_run(
             run_id=self.current_run_id,
