@@ -19,3 +19,15 @@ OBSIDIAN_PACKAGE = "md.obsidian"
 
 # Screenshot directory
 SCREENSHOTS_DIR = "screenshots"
+
+# Function calling support (for structured output)
+USE_FUNCTION_CALLING = os.getenv("USE_FUNCTION_CALLING", "false").lower() == "true"
+
+# Subgoal detection
+ENABLE_SUBGOAL_DETECTION = os.getenv("ENABLE_SUBGOAL_DETECTION", "true").lower() == "true"
+
+# Reward-based action selection
+USE_REWARD_SELECTION = os.getenv("USE_REWARD_SELECTION", "true").lower() == "true"
+
+# Disable RL pattern matching for benchmarking (ensures fair model comparison)
+DISABLE_RL_FOR_BENCHMARKING = os.getenv("DISABLE_RL_FOR_BENCHMARKING", "true").lower() == "true"
