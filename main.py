@@ -10,12 +10,14 @@ from tools.screenshot import ensure_screenshots_dir, take_screenshot
 from tools.adb_tools import reset_app, dump_ui
 from tools.memory import memory
 from tools.benchmark_logger import BenchmarkLogger
-from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL, REASONING_MODEL
+from tools.subgoal_detector import subgoal_detector
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL, REASONING_MODEL, ENABLE_SUBGOAL_DETECTION, DISABLE_RL_FOR_BENCHMARKING
 from datetime import datetime
 import xml.etree.ElementTree as ET
 import time
 import os
 import hashlib
+import json
 
 
 def run_test_suite(
@@ -48,7 +50,12 @@ def run_test_suite(
         print(f"📊 Benchmark logging enabled: {exp_id}")
         print(f"   Vision Model: {vision_model} (OpenAI)")
         print(f"   Reasoning Model: {reasoning_model}")
-        print(f"   Trial: {trial_num}\n")
+        print(f"   Trial: {trial_num}")
+        if DISABLE_RL_FOR_BENCHMARKING:
+            print(f"   ⚠️  RL Patterns: DISABLED (fair benchmarking mode)")
+        else:
+            print(f"   💾 RL Patterns: ENABLED")
+        print()
     
     # Ensure screenshots directory exists
     ensure_screenshots_dir()
@@ -104,6 +111,17 @@ def run_test_suite(
             )
         
         try:
+            # Initialize subgoal detection
+            if ENABLE_SUBGOAL_DETECTION:
+                subgoal_detector.detected_subgoals = []
+                subgoal_detector.achieved_subgoals = []
+                detected_subgoals = subgoal_detector.detect_subgoals(test["text"])
+                if detected_subgoals:
+                    print(f"  🎯 Detected {len(detected_subgoals)} subgoals:")
+                    for sg in detected_subgoals:
+                        print(f"     - {sg['description']}")
+                    print()
+            
             # Take initial screenshot
             screenshot_path = take_screenshot(f"test_{test['id']}_initial.png")
             before_screenshot = screenshot_path
@@ -111,6 +129,7 @@ def run_test_suite(
             max_steps = 20  # Prevent infinite loops
             step_count = 0
             failure_reason = None
+            memory_actions_count = 0  # Track how many actions came from memory (RL)
             
             print("🔄 Starting step-by-step visual planning loop...\n")
             
@@ -127,6 +146,10 @@ def run_test_suite(
                     previous_test_passed=previous_test_passed, test_id=test["id"],
                     logger=logger
                 )
+                
+                # Track if this action came from memory (RL)
+                if next_action.get("_from_memory"):
+                    memory_actions_count += 1
                 
                 # Log what we're about to do
                 action_type = next_action.get("action", "unknown")
@@ -254,6 +277,15 @@ def run_test_suite(
                 next_action["_execution_status"] = execution_result.get("status", "unknown")
                 action_history.append(next_action)
                 
+                # Check subgoal achievement
+                if ENABLE_SUBGOAL_DETECTION and execution_result.get("status") == "executed":
+                    android_state = next_action.get("_android_state", {})
+                    for subgoal in subgoal_detector.detected_subgoals:
+                        if not subgoal.get("achieved", False):
+                            achieved = subgoal_detector.check_subgoal_achievement(subgoal["type"], android_state)
+                            if achieved:
+                                print(f"  🎯 Subgoal achieved: {subgoal['description']}")
+                
                 print(f"✓ Action executed, screenshot updated\n")
                 time.sleep(0.5)  # Brief pause between steps
             
@@ -318,6 +350,17 @@ def run_test_suite(
             test_result["steps_taken"] = step_count
             test_result["final_screenshot"] = screenshot_path
             
+            # Add subgoal information
+            if ENABLE_SUBGOAL_DETECTION:
+                progress = subgoal_detector.get_progress()
+                test_result["subgoals"] = {
+                    "total": progress["total_subgoals"],
+                    "achieved": progress["achieved_subgoals"],
+                    "completion_rate": progress["completion_rate"],
+                    "detected": subgoal_detector.detected_subgoals,
+                    "achieved_list": subgoal_detector.achieved_subgoals
+                }
+            
             # End run logging
             if logger:
                 final_status = "PASS" if verdict == "PASS" else "FAIL"
@@ -325,6 +368,40 @@ def run_test_suite(
                     final_status=final_status,
                     failure_reason=failure_reason or (reason if verdict == "FAIL" else None)
                 )
+            
+            # Display API usage summary after each test
+            print(f"\n{'=' * 60}")
+            print(f"📊 TEST {test['id']} USAGE SUMMARY")
+            print(f"{'=' * 60}")
+            
+            if logger:
+                api_calls = logger.api_calls
+                api_actions = step_count - memory_actions_count  # Steps that used API
+                
+                if memory_actions_count > 0:
+                    print(f"💾 RL Usage: {memory_actions_count} action(s) from memory patterns (no API calls)")
+                    print(f"🔌 API Calls: {api_calls} call(s) made")
+                    print(f"📈 Total Steps: {step_count} ({memory_actions_count} RL + {api_actions} API)")
+                    if api_calls == 0:
+                        print(f"✅ Result: 100% RL usage - No API calls needed!")
+                    else:
+                        rl_percentage = (memory_actions_count / step_count) * 100
+                        print(f"✅ Result: {rl_percentage:.0f}% RL usage, {api_calls} API call(s)")
+                else:
+                    print(f"🔌 API Calls: {api_calls} call(s) made")
+                    print(f"📈 Total Steps: {step_count} (all used API)")
+                    print(f"💡 No RL patterns available - all actions used OpenAI API")
+                
+                if logger.cost_usd > 0:
+                    print(f"💰 Estimated Cost: ${logger.cost_usd:.6f}")
+                else:
+                    print(f"💰 Estimated Cost: $0.00 (all from RL memory)")
+            else:
+                print(f"📈 Total Steps: {step_count}")
+                if memory_actions_count > 0:
+                    print(f"💾 RL Usage: {memory_actions_count} action(s) from memory")
+            
+            print(f"{'=' * 60}\n")
             
         except Exception as e:
             print(f"\n❌ Test execution error: {str(e)}")
@@ -340,6 +417,37 @@ def run_test_suite(
                 )
         
         results.append(test_result)
+        
+        # Save episode JSON file for replay and batch analysis
+        try:
+            os.makedirs("results", exist_ok=True)
+            episode_filename = f"test_{test['id']}_{test_result.get('status', 'UNKNOWN').lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            episode_path = os.path.join("results", episode_filename)
+            
+            # Create episode data with action history for replay
+            episode_data = {
+                "test_id": test["id"],
+                "test_text": test["text"],
+                "expected": "PASS" if test["should_pass"] else "FAIL",
+                "status": test_result.get("status", "UNKNOWN"),
+                "verdict": test_result.get("verdict", "UNKNOWN"),
+                "reason": test_result.get("reason", ""),
+                "details": test_result.get("details", ""),
+                "steps_taken": test_result.get("steps_taken", 0),
+                "action_history": action_history,  # Full action history for replay
+                "final_screenshot": test_result.get("final_screenshot", ""),
+                "model": reasoning_model,
+                "vision_model": vision_model,
+                "timestamp": datetime.now().isoformat(),
+                "subgoals": test_result.get("subgoals", {})
+            }
+            
+            with open(episode_path, 'w') as f:
+                json.dump(episode_data, f, indent=2)
+            
+            print(f"  💾 Episode saved: {episode_filename}")
+        except Exception as e:
+            print(f"  ⚠️  Failed to save episode: {e}")
         
         # Update previous_test_passed for next test
         if test_result.get("status") == "PASS" and test["id"] == 1:

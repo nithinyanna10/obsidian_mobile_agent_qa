@@ -103,12 +103,41 @@ class AgentMemory:
         """Get a successful pattern for the given context"""
         context_key = self._get_context_key(context)
         
+        # First try exact match
         if context_key in self.successful_patterns:
             patterns = self.successful_patterns[context_key]
             if patterns:
                 # Return most recent and most used pattern
                 best = max(patterns, key=lambda p: (p["count"], p["timestamp"]))
                 return best["actions"]
+        
+        # If no exact match, try matching by test_goal only (ignore screen)
+        # This handles cases where patterns were saved with "test_complete" screen
+        # but we're checking with "unknown" or actual screen state
+        test_goal = context.get("test_goal", "").lower()
+        if test_goal:
+            # Normalize test_goal: remove quotes, extra spaces, take first 50 chars
+            normalized_goal = test_goal.replace("'", "").replace('"', '').strip()[:50]
+            
+            for stored_key, patterns in self.successful_patterns.items():
+                # Check if test_goal matches (stored key format: "screen:test_goal")
+                if ":" in stored_key:
+                    stored_goal = stored_key.split(":", 1)[1]
+                    # Normalize stored goal too
+                    stored_goal_normalized = stored_goal.replace("'", "").replace('"', '').strip()
+                    
+                    # Try exact match first
+                    if stored_goal_normalized == normalized_goal and patterns:
+                        best = max(patterns, key=lambda p: (p["count"], p["timestamp"]))
+                        return best["actions"]
+                    
+                    # Try substring match (if stored goal contains our goal or vice versa)
+                    # This handles cases like "open obsidian, create vault" vs "create vault"
+                    if (normalized_goal in stored_goal_normalized or 
+                        stored_goal_normalized in normalized_goal) and patterns:
+                        # Prefer longer matches (more specific)
+                        best = max(patterns, key=lambda p: (p["count"], p["timestamp"]))
+                        return best["actions"]
         
         return None
     

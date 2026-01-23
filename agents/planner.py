@@ -16,10 +16,12 @@ from collections import Counter
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL, REASONING_MODEL, OLLAMA_BASE_URL
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL, REASONING_MODEL, OLLAMA_BASE_URL, USE_FUNCTION_CALLING, USE_REWARD_SELECTION, ENABLE_SUBGOAL_DETECTION, DISABLE_RL_FOR_BENCHMARKING
 from tools.adb_tools import detect_current_screen, get_ui_text, dump_ui, get_current_package_and_activity
 from tools.memory import memory
 from tools.llm_client import LLMClient
+from tools.function_calling import get_action_function_schema, parse_function_call_response
+from tools.subgoal_detector import subgoal_detector
 
 
 # LLM client will be initialized dynamically based on current REASONING_MODEL
@@ -287,8 +289,11 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
         
         # ===== MEMORY-BASED ACTION SELECTION (REDUCE OpenAI API CALLS) =====
         # Check memory FIRST - if we have a successful pattern, use it instead of calling OpenAI
-        context = {"current_screen": android_state.get('current_screen', 'unknown'), "test_goal": test_text}
-        successful_pattern = memory.get_successful_pattern(context)
+        # BUT: Skip RL patterns if benchmarking mode is enabled (for fair model comparison)
+        successful_pattern = None
+        if not DISABLE_RL_FOR_BENCHMARKING:
+            context = {"current_screen": android_state.get('current_screen', 'unknown'), "test_goal": test_text}
+            successful_pattern = memory.get_successful_pattern(context)
         
         if successful_pattern and len(successful_pattern) > 0:
             # We have a successful pattern - check if we're at the right step
@@ -1857,16 +1862,47 @@ Output ONLY valid JSON, no markdown:"""
                     status_marker = " [SUCCESS]"
                 history_str += f"  {i+1}. {action.get('action', 'unknown')}: {action.get('description', '')}{status_marker}\n"
         
-        # Check memory for failed patterns to avoid (successful_pattern already checked at start)
-        should_avoid, avoid_reason = memory.should_avoid_action(context, {"action": "type", "description": "Type vault name"})
-        
+        # Check memory for failed patterns to avoid (only if RL is enabled)
+        should_avoid = False
+        avoid_reason = None
         memory_hint = ""
-        if successful_pattern and len(action_history) < len(successful_pattern):
-            memory_hint = f"\n💡 Memory: Following successful pattern ({len(action_history) + 1}/{len(successful_pattern)} steps)"
-        elif successful_pattern:
-            memory_hint = f"\n💡 Memory: Completed pattern, verifying completion..."
-        if should_avoid:
-            memory_hint += f"\n⚠️  Memory: Avoid typing - failed 3+ times: {avoid_reason}"
+        reward_hint = ""
+        
+        if not DISABLE_RL_FOR_BENCHMARKING:
+            should_avoid, avoid_reason = memory.should_avoid_action(context, {"action": "type", "description": "Type vault name"})
+            
+            if successful_pattern and len(action_history) < len(successful_pattern):
+                memory_hint = f"\n💡 Memory: Following successful pattern ({len(action_history) + 1}/{len(successful_pattern)} steps)"
+            elif successful_pattern:
+                memory_hint = f"\n💡 Memory: Completed pattern, verifying completion..."
+            if should_avoid:
+                memory_hint += f"\n⚠️  Memory: Avoid typing - failed 3+ times: {avoid_reason}"
+            
+            # Reward-based action selection hint
+            if USE_REWARD_SELECTION:
+                # Get reward scores for common actions
+                tap_reward = memory.get_action_reward("tap")
+                type_reward = memory.get_action_reward("type")
+                if tap_reward > 0.1 or type_reward > 0.1:
+                    reward_hint = f"\n💰 Reward scores: tap={tap_reward:.2f}, type={type_reward:.2f} (higher is better)"
+        
+        # Subgoal detection
+        subgoal_hint = ""
+        if ENABLE_SUBGOAL_DETECTION:
+            subgoals = subgoal_detector.detect_subgoals(test_text)
+            progress = subgoal_detector.get_progress()
+            if progress["total_subgoals"] > 0:
+                subgoal_hint = f"\n🎯 Subgoals: {progress['achieved_subgoals']}/{progress['total_subgoals']} achieved ({progress['completion_rate']*100:.0f}%)"
+        
+        # Few-shot examples
+        few_shot_examples = ""
+        try:
+            examples_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "few_shot_examples.txt")
+            if os.path.exists(examples_path):
+                with open(examples_path, 'r') as f:
+                    few_shot_examples = f"\n\n=== FEW-SHOT EXAMPLES ===\n{f.read()}\n"
+        except:
+            pass
         
         # CRITICAL: Check if Test 2 is complete - both "Meeting Notes" and "Daily Standup" are present
         # Do this check before main planning to catch completion and prevent loops
@@ -2129,12 +2165,15 @@ Screenshot Description:
 
 Test Goal: "{test_text}"
 {history_str}
+{few_shot_examples}
 
 IMPORTANT: 
 - You MUST return a valid JSON action - this is required for the automation to work
 - Use BOTH the screenshot description AND the Android state information above to understand what's happening
 - Do NOT refuse to help - this is a legitimate testing task
 {memory_hint}
+{reward_hint}
+{subgoal_hint}
 
 Based on the screenshot description and Android state, decide the next single action to take.
 
@@ -2185,44 +2224,80 @@ Return ONLY valid JSON in this format: {{"action": "tap", "x": 100, "y": 200, "d
 No markdown, no code blocks, no explanations - just the JSON object:
 """
         
+        # Prepare function calling if enabled
+        call_kwargs = {
+            "logger": logger,
+            "temperature": 0.1,
+            "max_tokens": 200
+        }
+        
+        if USE_FUNCTION_CALLING and current_llm_client.reasoning_provider == "openai":
+            # Use function calling for structured output
+            function_schema = get_action_function_schema()
+            call_kwargs["tools"] = [{"type": "function", "function": function_schema}]
+            call_kwargs["tool_choice"] = {"type": "function", "function": {"name": "execute_action"}}
+            print(f"  🔧 Using function calling for structured output")
+        
         # Call reasoning model (Ollama or OpenAI)
-        response = llm_client.call_reasoning(
+        response = current_llm_client.call_reasoning(
             messages=[
                 {
                     "role": "user",
                     "content": reasoning_prompt
                 }
             ],
-            logger=logger,
-            temperature=0.1,
-            max_tokens=200
+            **call_kwargs
         )
         
-        if not response or not response.choices or not response.choices[0].message.content:
+        if not response or not response.choices:
             return {"action": "FAIL", "reason": "Empty response from reasoning model"}
         
-        result_text = response.choices[0].message.content.strip()
-        print(f"  ✓ Reasoning model response received")
+        # Parse response (function calling or text)
+        action = None
         
-        # Remove markdown code blocks if present
-        if result_text.startswith("```json"):
-            result_text = result_text[7:]
-        if result_text.startswith("```"):
-            result_text = result_text[3:]
-        if result_text.endswith("```"):
-            result_text = result_text[:-3]
-        result_text = result_text.strip()
+        if USE_FUNCTION_CALLING and current_llm_client.reasoning_provider == "openai":
+            # Try to parse function call
+            action = parse_function_call_response(response)
+            if action:
+                print(f"  ✓ Function call parsed successfully")
         
-        try:
-            action = json.loads(result_text)
-            # Validate action structure
-            if "action" not in action:
-                return {"action": "FAIL", "reason": "Invalid action format from reasoning model"}
-            # Attach Android state for logging
-            action["_android_state"] = android_state
-            return action
-        except json.JSONDecodeError:
-            return {"action": "FAIL", "reason": f"Could not parse LLM response: {result_text}"}
+        # Fallback to text parsing if function calling didn't work
+        if not action:
+            message = response.choices[0].message
+            if hasattr(message, 'content') and message.content:
+                result_text = message.content.strip()
+                print(f"  ✓ Reasoning model response received (text mode)")
+                
+                # Remove markdown code blocks if present
+                if result_text.startswith("```json"):
+                    result_text = result_text[7:]
+                if result_text.startswith("```"):
+                    result_text = result_text[3:]
+                if result_text.endswith("```"):
+                    result_text = result_text[:-3]
+                result_text = result_text.strip()
+                
+                try:
+                    action = json.loads(result_text)
+                except json.JSONDecodeError:
+                    return {"action": "FAIL", "reason": f"Could not parse LLM response: {result_text}"}
+            else:
+                return {"action": "FAIL", "reason": "Empty response from reasoning model"}
+        
+        # Validate action structure
+        if not action or "action" not in action:
+            return {"action": "FAIL", "reason": "Invalid action format from reasoning model"}
+        
+        # Reward-based action selection (if enabled and multiple options available)
+        if USE_REWARD_SELECTION and action.get("action") in ["tap", "type"]:
+            action_type = action.get("action")
+            reward = memory.get_action_reward(action_type)
+            if reward < -0.3:  # Low reward, consider alternative
+                print(f"  ⚠️  Action '{action_type}' has low reward ({reward:.2f}), but proceeding...")
+        
+        # Attach Android state for logging
+        action["_android_state"] = android_state
+        return action
             
     except Exception as e:
         return {"action": "FAIL", "reason": f"Planning error: {str(e)}"}
