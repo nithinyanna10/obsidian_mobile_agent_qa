@@ -1,0 +1,59 @@
+Few-Shot Examples for Obsidian Mobile QA Agent
+
+These examples show successful action sequences for common tasks:
+
+=== Example 1: Create Vault ===
+Goal: Create a new vault named 'InternVault'
+
+Step 1: Tap "Continue without sync" button
+Action: {"action": "tap", "x": 540, "y": 1800, "description": "Tap 'Continue without sync' button"}
+
+Step 2: Select storage (App storage)
+Action: {"action": "tap", "x": 540, "y": 1200, "description": "Tap 'App storage' option"}
+
+Step 3: Type vault name
+Action: {"action": "type", "text": "InternVault", "description": "Type vault name 'InternVault'"}
+
+Step 4: Confirm creation
+Action: {"action": "tap", "x": 540, "y": 1600, "description": "Tap 'Create vault' button"}
+
+Result: Vault 'InternVault' created successfully
+
+=== Example 2: Create Note ===
+Goal: Create a new note titled 'Meeting Notes' with content 'Daily Standup'
+
+Step 1: Tap create note button
+Action: {"action": "tap", "x": 900, "y": 200, "description": "Tap 'Create note' or 'New note' button"}
+
+Step 2: Type note title
+Action: {"action": "type", "text": "Meeting Notes", "target": "title", "description": "Type note title 'Meeting Notes'"}
+
+Step 3: Focus body field
+Action: {"action": "focus", "target": "body", "description": "Focus note body editor"}
+
+Step 4: Type note content
+Action: {"action": "type", "text": "Daily Standup", "target": "body", "description": "Type note body text 'Daily Standup'"}
+
+Result: Note 'Meeting Notes' with 'Daily Standup' content created successfully
+
+=== Example 3: Navigate to Settings ===
+Goal: Open Settings and navigate to Appearance tab
+
+Step 1: Open menu
+Action: {"action": "tap", "x": 1000, "y": 100, "description": "Tap three dots menu button in top-right"}
+
+Step 2: Tap Settings
+Action: {"action": "tap", "x": 800, "y": 600, "description": "Tap 'Settings' option in menu"}
+
+Step 3: Tap Appearance tab
+Action: {"action": "tap", "x": 200, "y": 300, "description": "Tap 'Appearance' tab"}
+
+Result: Appearance settings opened successfully
+
+=== Key Patterns ===
+1. Always check Android state first (has_edittext, current_screen)
+2. Use target="title" or target="body" for note fields
+3. Use focus action to switch between title and body
+4. Tap coordinates can be (0,0) - executor will find element via UIAutomator
+5. After typing vault name, immediately tap "Create vault" button
+6. For storage selection, always choose "App storage" not "Device storage"
