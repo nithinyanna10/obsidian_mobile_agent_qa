@@ -103,10 +103,20 @@ class LLMClient:
     
     def _call_openai_reasoning(self, messages: List[Dict], logger=None, **kwargs):
         """Call OpenAI for reasoning"""
+        # Support function calling if tools/functions provided
+        call_kwargs = {**kwargs}
+        if "tools" in kwargs:
+            call_kwargs["tools"] = kwargs["tools"]
+            call_kwargs["tool_choice"] = kwargs.get("tool_choice", "auto")
+        elif "functions" in kwargs:
+            # Legacy function calling format
+            call_kwargs["functions"] = kwargs["functions"]
+            call_kwargs["function_call"] = kwargs.get("function_call", "auto")
+        
         response = self.reasoning_client.chat.completions.create(
             model=self.reasoning_model,
             messages=messages,
-            **kwargs
+            **call_kwargs
         )
         
         # Log API call
