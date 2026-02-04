@@ -111,31 +111,37 @@ class AgentMemory:
                 best = max(patterns, key=lambda p: (p["count"], p["timestamp"]))
                 return best["actions"]
         
-        # If no exact match, try matching by test_goal only (ignore screen)
-        # This handles cases where patterns were saved with "test_complete" screen
-        # but we're checking with "unknown" or actual screen state
+        # If no exact match, try matching by app + test_goal (ignore screen)
+        # Only match patterns from the SAME app (DuckDuckGo vs Obsidian stay separate)
+        app = context.get("app", "obsidian").lower()
         test_goal = context.get("test_goal", "").lower()
         if test_goal:
             # Normalize test_goal: remove quotes, extra spaces, take first 50 chars
             normalized_goal = test_goal.replace("'", "").replace('"', '').strip()[:50]
             
             for stored_key, patterns in self.successful_patterns.items():
-                # Check if test_goal matches (stored key format: "screen:test_goal")
-                if ":" in stored_key:
-                    stored_goal = stored_key.split(":", 1)[1]
-                    # Normalize stored goal too
+                # Stored key format: "app:screen:test_goal" - require same app
+                parts = stored_key.split(":", 2)
+                if len(parts) >= 3:
+                    stored_app, stored_screen, stored_goal = parts[0], parts[1], parts[2]
+                    if stored_app != app:
+                        continue  # Different app - don't use Obsidian pattern for DuckDuckGo
                     stored_goal_normalized = stored_goal.replace("'", "").replace('"', '').strip()
                     
-                    # Try exact match first
                     if stored_goal_normalized == normalized_goal and patterns:
                         best = max(patterns, key=lambda p: (p["count"], p["timestamp"]))
                         return best["actions"]
-                    
-                    # Try substring match (if stored goal contains our goal or vice versa)
-                    # This handles cases like "open obsidian, create vault" vs "create vault"
-                    if (normalized_goal in stored_goal_normalized or 
+                    if (normalized_goal in stored_goal_normalized or
                         stored_goal_normalized in normalized_goal) and patterns:
-                        # Prefer longer matches (more specific)
+                        best = max(patterns, key=lambda p: (p["count"], p["timestamp"]))
+                        return best["actions"]
+                # Backward compat: old keys were "screen:test_goal" (2 parts)
+                elif len(parts) == 2:
+                    stored_goal = parts[1]
+                    stored_goal_normalized = stored_goal.replace("'", "").replace('"', '').strip()
+                    if (stored_goal_normalized == normalized_goal or
+                        normalized_goal in stored_goal_normalized or
+                        stored_goal_normalized in normalized_goal) and patterns:
                         best = max(patterns, key=lambda p: (p["count"], p["timestamp"]))
                         return best["actions"]
         
@@ -163,10 +169,11 @@ class AgentMemory:
         return self.action_rewards.get(action_type, 0.0)
     
     def _get_context_key(self, context):
-        """Generate a key from context (screen, test goal, etc.)"""
+        """Generate a key from context (app, screen, test goal). Separate keys per app (DuckDuckGo vs Obsidian)."""
+        app = context.get("app", "obsidian").lower()
         screen = context.get("current_screen", "unknown")
         test_goal = context.get("test_goal", "").lower()[:50]  # First 50 chars
-        return f"{screen}:{test_goal}"
+        return f"{app}:{screen}:{test_goal}"
     
     def _clean_action_sequence(self, action_sequence):
         """Clean action sequence to remove circular references and non-serializable data"""
