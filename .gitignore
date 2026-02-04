@@ -14,6 +14,10 @@ screenshots/
 *.png
 *.jpg
 
+# Run artifacts
+results/
+xml_dumps/
+
 # API Keys
 .env
 *.key
