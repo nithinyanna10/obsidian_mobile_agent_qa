@@ -4,10 +4,10 @@ Executes exactly ONE action and takes screenshot
 Uses UIAutomator to find real coordinates when LLM provides generic ones
 Never assumes success
 """
-from tools.adb_tools import tap, type_text, type_text_slow, keyevent, keycombination, swipe, open_app, find_element_by_text, bounds_to_center, dump_ui, get_ui_text
+from tools.adb_tools import tap, type_text, type_text_slow, keyevent, keycombination, swipe, open_app, find_element_by_text, bounds_to_center, dump_ui, get_ui_text, resolve_element_to_center
 import xml.etree.ElementTree as ET
 from tools.screenshot import take_screenshot
-from config import OBSIDIAN_PACKAGE, OPENAI_API_KEY, OPENAI_MODEL
+from config import OBSIDIAN_PACKAGE, get_target_package, OPENAI_API_KEY, OPENAI_MODEL, USE_XML_ELEMENT_ACTIONS
 from openai import OpenAI
 from PIL import Image
 import base64
@@ -18,7 +18,7 @@ import re
 import time
 
 
-def execute_action(action, logger=None):
+def execute_action(action, logger=None, target_package=None):
     """
     Execute exactly ONE action
     Uses UIAutomator to find real coordinates if LLM gives generic ones
@@ -26,10 +26,12 @@ def execute_action(action, logger=None):
     Args:
         action: Dictionary with action type and parameters
         logger: Optional BenchmarkLogger instance for logging
+        target_package: Android package for current app (for open_app default)
     
     Returns:
         Dictionary with execution status, screenshot path, action_source, and intended_success
     """
+    pkg = target_package or get_target_package()
     action_type = action.get("action", "").lower()
     description = action.get("description", "")
     action_source = "FALLBACK_COORDS"  # Default, will be updated based on how element was found
@@ -38,13 +40,32 @@ def execute_action(action, logger=None):
     try:
         if action_type == "tap":
             # Check if this is an app icon tap (should use open_app instead)
-            if "app icon" in description.lower() or ("obsidian" in description.lower() and "icon" in description.lower()):
+            if "app icon" in description.lower() or ("open" in description.lower() and "icon" in description.lower()):
                 print(f"  📱 Converting app icon tap to open_app")
-                open_app(OBSIDIAN_PACKAGE)
+                open_app(pkg)
                 time.sleep(3)
             else:
                 x = action.get("x", 0)
                 y = action.get("y", 0)
+                
+                # Phase 2: Resolve tap by element label when action has "element" key
+                if USE_XML_ELEMENT_ACTIONS and action.get("element"):
+                    label = action.get("element", "").strip()
+                    if label:
+                        tap_x, tap_y = resolve_element_to_center(label)
+                        if tap_x is not None and tap_y is not None:
+                            print(f"  🔍 Element tap: '{label}' -> ({tap_x}, {tap_y})")
+                            action_source = "XML"
+                            tap(tap_x, tap_y)
+                            time.sleep(1.5)
+                            screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                            return {
+                                "status": "executed",
+                                "action": action,
+                                "screenshot": screenshot_path,
+                                "action_source": action_source,
+                            }
+                        print(f"  ⚠️  Element '{label}' not found in XML, falling back to coordinates/description")
                 
                 # If coordinates are generic (100, 200) or invalid, try UIAutomator
                 if (x == 100 and y == 200) or x == 0 or y == 0:
@@ -62,7 +83,7 @@ def execute_action(action, logger=None):
                         print(f"  📄 Generating UI XML dump after entering Settings...")
                         try:
                             root = dump_ui()
-                            if root:
+                            if root is not None:
                                 xml_str = ET.tostring(root, encoding='unicode')
                                 os.makedirs("xml_dumps", exist_ok=True)
                                 dump_file = f"xml_dumps/settings_ui_dump_{int(time.time())}.xml"
@@ -192,7 +213,7 @@ def execute_action(action, logger=None):
                         menu_bounds = None
                         try:
                             root = dump_ui()
-                            if root:
+                            if root is not None:
                                 for node in root.iter("node"):
                                     node_class = node.attrib.get("class", "")
                                     node_text = node.attrib.get("text", "").strip()
@@ -228,7 +249,7 @@ def execute_action(action, logger=None):
                                 found_print_to_pdf = False
                                 try:
                                     root = dump_ui()
-                                    if root:
+                                    if root is not None:
                                         for node in root.iter("node"):
                                             node_text = node.attrib.get("text", "").strip().lower()
                                             content_desc = node.attrib.get("content-desc", "").strip().lower()
@@ -257,7 +278,7 @@ def execute_action(action, logger=None):
                                         # Search again after scrolling
                                         try:
                                             root = dump_ui()
-                                            if root:
+                                            if root is not None:
                                                 for node in root.iter("node"):
                                                     node_text = node.attrib.get("text", "").strip().lower()
                                                     content_desc = node.attrib.get("content-desc", "").strip().lower()
@@ -371,7 +392,7 @@ def execute_action(action, logger=None):
             
             try:
                 root = dump_ui()
-                if root:
+                if root is not None:
                     edittexts = []
                     for node in root.iter("node"):
                         class_name = node.attrib.get("class", "").lower()
@@ -423,11 +444,32 @@ def execute_action(action, logger=None):
             target = action.get("target", "")  # "title" or "body"
             print(f"  ⌨️  Type: {description} - '{text}' (target: {target})")
             
+            # Phase 2: Type in field by element label when action has "element" key
+            if USE_XML_ELEMENT_ACTIONS and action.get("element"):
+                label = action.get("element", "").strip()
+                if label:
+                    tap_x, tap_y = resolve_element_to_center(label)
+                    if tap_x is not None and tap_y is not None:
+                        print(f"  🔍 Type in element: '{label}' -> tap ({tap_x}, {tap_y}) then type")
+                        action_source = "XML"
+                        tap(tap_x, tap_y)
+                        time.sleep(0.5)
+                        type_text(text)
+                        time.sleep(1.5)
+                        screenshot_path = take_screenshot(f"after_action_{int(time.time())}.png")
+                        return {
+                            "status": "executed",
+                            "action": action,
+                            "screenshot": screenshot_path,
+                            "action_source": action_source,
+                        }
+                    print(f"  ⚠️  Element '{label}' not found for type, falling back to EditText/target logic")
+            
             # ALWAYS tap input field first to ensure keyboard appears
             # This is critical for vault name input and other text fields
             try:
                 root = dump_ui()
-                if root:
+                if root is not None:
                     edittexts = []
                     for node in root.iter("node"):
                         class_name = node.attrib.get("class", "").lower()
@@ -475,7 +517,7 @@ def execute_action(action, logger=None):
                 # Execute focus
                 try:
                     root = dump_ui()
-                    if root:
+                    if root is not None:
                         edittexts = []
                         for node in root.iter("node"):
                             class_name = node.attrib.get("class", "").lower()
@@ -542,7 +584,7 @@ def execute_action(action, logger=None):
             verified = False
             try:
                 root = dump_ui()
-                if root:
+                if root is not None:
                     # Get all text from UI dump
                     all_text = []
                     for node in root.iter("node"):
@@ -581,7 +623,7 @@ def execute_action(action, logger=None):
                         
                         # Verify again
                         root = dump_ui()
-                        if root:
+                        if root is not None:
                             all_text = []
                             for node in root.iter("node"):
                                 text_attr = node.attrib.get("text", "").strip()
@@ -642,16 +684,23 @@ def execute_action(action, logger=None):
             time.sleep(seconds)
             
         elif action_type == "open_app":
-            app = action.get("app", OBSIDIAN_PACKAGE)
+            app = action.get("app", pkg)
             print(f"  📱 Open app: {app}")
             open_app(app)
             time.sleep(3)  # Wait for app to load
         
         elif action_type == "open_sidebar":
-            # Special action: Open sidebar using ratio coordinates, then find Settings gear icon
-            x = action.get("x", 88)
-            y = action.get("y", 134)
-            print(f"  📂 Opening sidebar at ({x}, {y})...")
+            # Obsidian: top-left sidebar. DuckDuckGo: three-dots menu is TOP-RIGHT (0.92W, 0.08H)
+            from tools.adb_tools import get_screen_size
+            screen_size = get_screen_size()
+            if screen_size and pkg and "duckduckgo" in pkg.lower():
+                width, height = screen_size
+                x, y = int(width * 0.92), int(height * 0.08)
+                print(f"  📂 DuckDuckGo: Opening three-dots menu at top-right ({x}, {y})...")
+            else:
+                x = action.get("x", 88)
+                y = action.get("y", 134)
+                print(f"  📂 Opening sidebar at ({x}, {y})...")
             tap(x, y)
             time.sleep(2.0)  # Wait longer for sidebar to fully slide in
             
@@ -659,7 +708,7 @@ def execute_action(action, logger=None):
             print(f"  📄 Generating UI XML dump after opening sidebar...")
             try:
                 root = dump_ui()
-                if root:
+                if root is not None:
                     xml_str = ET.tostring(root, encoding='unicode')
                     # Save to file for analysis
                     os.makedirs("xml_dumps", exist_ok=True)
@@ -675,9 +724,11 @@ def execute_action(action, logger=None):
             screenshot_path = take_screenshot(f"sidebar_opened_{int(time.time())}.png")
             
             # Try XML search first (faster and more reliable, no API cost)
-            print(f"  🔍 Searching for Settings in sidebar via XML...")
+            print(f"  🔍 Searching for Settings in sidebar/menu via XML...")
             settings_tapped = False
             settings_bounds = find_element_by_text("settings")
+            if not settings_bounds and pkg and "duckduckgo" in pkg.lower():
+                settings_bounds = find_element_by_text("Privacy")
             if settings_bounds:
                 tap_x, tap_y = bounds_to_center(settings_bounds)
                 if tap_x and tap_y:
@@ -687,17 +738,19 @@ def execute_action(action, logger=None):
                     settings_tapped = True
                     print(f"  ✓ Successfully tapped Settings via XML")
                     
-                    # Verify we're in Settings screen using LLM vision
-                    print(f"  🔍 Verifying we're in Settings screen using LLM vision...")
-                    try:
-                        verify_screenshot = take_screenshot(f"settings_verification_{int(time.time())}.png")
-                        img = Image.open(verify_screenshot)
-                        img_buffer = io.BytesIO()
-                        img.save(img_buffer, format='PNG')
-                        img_buffer.seek(0)
-                        img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
-                        
-                        verify_prompt = """Look at this screenshot. We just tapped the Settings icon.
+                    # Verify we're in Settings screen using LLM vision (skip for DuckDuckGo to reduce API usage)
+                    if pkg and "duckduckgo" in pkg.lower():
+                        pass  # Skip LLM verification for DuckDuckGo
+                    else:
+                        print(f"  🔍 Verifying we're in Settings screen using LLM vision...")
+                        try:
+                            verify_screenshot = take_screenshot(f"settings_verification_{int(time.time())}.png")
+                            img = Image.open(verify_screenshot)
+                            img_buffer = io.BytesIO()
+                            img.save(img_buffer, format='PNG')
+                            img_buffer.seek(0)
+                            img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
+                            verify_prompt = """Look at this screenshot. We just tapped the Settings icon.
 
 Are we currently in the Settings screen? Look for:
 - Settings title or header
@@ -711,40 +764,37 @@ Return ONLY a JSON object:
 }
 
 If you see Settings screen elements, return {"in_settings": true}. Otherwise {"in_settings": false}."""
-                        
-                        client = OpenAI(api_key=OPENAI_API_KEY)
-                        response = client.chat.completions.create(
-                            model=OPENAI_MODEL,
-                            messages=[
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "text", "text": verify_prompt},
-                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
-                                    ]
-                                }
-                            ],
-                            max_tokens=100,
-                            temperature=0.1
-                        )
-                        
-                        response_text = response.choices[0].message.content.strip()
-                        # Extract JSON
-                        json_match = re.search(r'\{[^}]+\}', response_text, re.DOTALL)
-                        if json_match:
-                            verify_result = json.loads(json_match.group())
-                            if verify_result.get("in_settings"):
-                                print(f"  ✓ LLM confirmed: We're in Settings screen ({verify_result.get('reason', '')})")
+                            client = OpenAI(api_key=OPENAI_API_KEY)
+                            response = client.chat.completions.create(
+                                model=OPENAI_MODEL,
+                                messages=[
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {"type": "text", "text": verify_prompt},
+                                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_data}"}}
+                                        ]
+                                    }
+                                ],
+                                max_tokens=100,
+                                temperature=0.1
+                            )
+                            response_text = response.choices[0].message.content.strip()
+                            json_match = re.search(r'\{[^}]+\}', response_text, re.DOTALL)
+                            if json_match:
+                                verify_result = json.loads(json_match.group())
+                                if verify_result.get("in_settings"):
+                                    print(f"  ✓ LLM confirmed: We're in Settings screen ({verify_result.get('reason', '')})")
+                                else:
+                                    print(f"  ⚠️  LLM says we're NOT in Settings screen ({verify_result.get('reason', '')})")
                             else:
-                                print(f"  ⚠️  LLM says we're NOT in Settings screen ({verify_result.get('reason', '')})")
-                        else:
-                            print(f"  ⚠️  Could not parse LLM verification response")
-                    except Exception as e:
-                        error_msg = str(e)
-                        if "quota" in error_msg.lower() or "429" in error_msg:
-                            print(f"  ⚠️  OpenAI quota exceeded, skipping verification")
-                        else:
-                            print(f"  ⚠️  Error verifying Settings screen: {e}")
+                                print(f"  ⚠️  Could not parse LLM verification response")
+                        except Exception as e:
+                            error_msg = str(e)
+                            if "quota" in error_msg.lower() or "429" in error_msg:
+                                print(f"  ⚠️  OpenAI quota exceeded, skipping verification")
+                            else:
+                                print(f"  ⚠️  Error verifying Settings screen: {e}")
             
             # Fallback to LLM vision only if XML search fails (to save API quota)
             if not settings_tapped:
