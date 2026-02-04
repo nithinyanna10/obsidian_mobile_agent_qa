@@ -100,7 +100,28 @@ def show_latest_run(db_path: str = "benchmark.db", run_id: str = None):
     print(f"Total Tokens:   {tokens_in + tokens_out:,}")
     print(f"Cost:           ${cost:.6f}")
     print()
-    
+
+    # Action accuracy (tap, swipe, scroll)
+    taps_total = safe_get(run, 'taps_total', 0) or 0
+    taps_effective = safe_get(run, 'taps_effective', 0) or 0
+    swipes_total = safe_get(run, 'swipes_total', 0) or 0
+    swipes_effective = safe_get(run, 'swipes_effective', 0) or 0
+    scrolls_total = safe_get(run, 'scrolls_total', 0) or 0
+    scrolls_effective = safe_get(run, 'scrolls_effective', 0) or 0
+    if taps_total or swipes_total or scrolls_total:
+        print("🎯 ACTION ACCURACY")
+        print("-" * 80)
+        if taps_total:
+            pct = (100.0 * taps_effective / taps_total) if taps_total else 0
+            print(f"  Tap:    {taps_effective}/{taps_total} effective ({pct:.1f}%)")
+        if swipes_total:
+            pct = (100.0 * swipes_effective / swipes_total) if swipes_total else 0
+            print(f"  Swipe:  {swipes_effective}/{swipes_total} effective ({pct:.1f}%)")
+        if scrolls_total:
+            pct = (100.0 * scrolls_effective / scrolls_total) if scrolls_total else 0
+            print(f"  Scroll: {scrolls_effective}/{scrolls_total} effective ({pct:.1f}%)")
+        print()
+
     # Additional Info
     failure_reason = safe_get(run, 'failure_reason')
     if failure_reason:
