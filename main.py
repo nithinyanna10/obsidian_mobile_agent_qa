@@ -2,7 +2,7 @@
 Main Orchestrator - Step-by-Step Visual Planning Loop
 Action → Screenshot → LLM → Action → Screenshot → ...
 """
-from tests.qa_tests import QA_TESTS
+from tests.qa_tests import QA_TESTS, APP_TESTS
 from agents.planner import plan_next_action
 from agents.executor import execute_action
 from agents.supervisor import verify, compare_with_expected
@@ -11,7 +11,7 @@ from tools.adb_tools import reset_app, dump_ui
 from tools.memory import memory
 from tools.benchmark_logger import BenchmarkLogger
 from tools.subgoal_detector import subgoal_detector
-from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL, REASONING_MODEL, ENABLE_SUBGOAL_DETECTION, DISABLE_RL_FOR_BENCHMARKING
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, DUCKDUCKGO_PACKAGE, get_target_package, OPENAI_MODEL, REASONING_MODEL, ENABLE_SUBGOAL_DETECTION, DISABLE_RL_FOR_BENCHMARKING, USE_XML_ELEMENT_ACTIONS
 from datetime import datetime
 import xml.etree.ElementTree as ET
 import time
@@ -24,32 +24,52 @@ def run_test_suite(
     model: str = None,
     experiment_id: str = None,
     trial_num: int = 1,
-    enable_logging: bool = True
+    enable_logging: bool = True,
+    app: str = None
 ):
     """
-    Run all QA tests using step-by-step visual planning
+    Run QA tests using step-by-step visual planning.
     
     Args:
         model: Model identifier (e.g., "gpt-4o")
         experiment_id: Experiment identifier
         trial_num: Trial number
         enable_logging: Whether to enable benchmark logging
+        app: Target app - "obsidian" (default) or "duckduckgo"
     """
+    # Select app: package and test list
+    if app and app.lower() == "duckduckgo":
+        os.environ["TARGET_PACKAGE"] = DUCKDUCKGO_PACKAGE
+        tests = APP_TESTS["duckduckgo"]
+        app_label = "DuckDuckGo"
+    else:
+        os.environ["TARGET_PACKAGE"] = OBSIDIAN_PACKAGE
+        tests = APP_TESTS.get("obsidian", QA_TESTS)
+        app_label = "Obsidian"
+    
+    target_package = get_target_package()
+    
     print("=" * 60)
-    print("Obsidian Mobile QA Agent - Visual Planning Test Suite")
+    print(f"Mobile QA Agent - Visual Planning Test Suite ({app_label})")
     print("=" * 60)
     
+    # Use vision model for both vision and reasoning (ignore REASONING_MODEL in env)
+    vision_model = OPENAI_MODEL  # Always OpenAI for vision
+    reasoning_model = model or vision_model
+    os.environ["REASONING_MODEL"] = reasoning_model  # Planner reads this via get_llm_client()
+
+    # Use RL patterns for this run (planner checks env at runtime where applicable)
+    os.environ["DISABLE_RL_FOR_BENCHMARKING"] = "false"
+
     # Initialize benchmark logger
     logger = None
     if enable_logging:
-        # Use reasoning model if provided, otherwise default
-        reasoning_model = model or REASONING_MODEL or OPENAI_MODEL
-        vision_model = OPENAI_MODEL  # Always OpenAI for vision
         exp_id = experiment_id or f"bench_v1_{datetime.now().strftime('%Y_%m_%d')}"
         logger = BenchmarkLogger(experiment_id=exp_id)
         print(f"📊 Benchmark logging enabled: {exp_id}")
+        print(f"   App: {app_label} ({target_package})")
         print(f"   Vision Model: {vision_model} (OpenAI)")
-        print(f"   Reasoning Model: {reasoning_model}")
+        print(f"   Reasoning Model: {reasoning_model}" + (" (same as vision)" if reasoning_model == vision_model else ""))
         print(f"   Trial: {trial_num}")
         if DISABLE_RL_FOR_BENCHMARKING:
             print(f"   ⚠️  RL Patterns: DISABLED (fair benchmarking mode)")
@@ -72,8 +92,8 @@ def run_test_suite(
     previous_test_passed = False  # Track if previous test passed
     
     # Reset app only before first test (tests are sequential)
-    print("🔄 Resetting app state before first test...")
-    reset_app(OBSIDIAN_PACKAGE)
+    print(f"🔄 Resetting app state before first test ({target_package})...")
+    reset_app(target_package)
     print("✓ App reset complete\n")
     
     config = {
@@ -83,7 +103,7 @@ def run_test_suite(
         "enable_logging": enable_logging
     }
     
-    for test in QA_TESTS:
+    for test in tests:
         print(f"\n{'=' * 60}")
         print(f"[TEST ID: {test['id']}] Running Test {test['id']}: {test['text']}")
         print(f"Expected Result: {'PASS' if test['should_pass'] else 'FAIL'}")
@@ -139,12 +159,20 @@ def run_test_suite(
                 
                 # Planner: Analyze screenshot + Android state and decide next action
                 print("📋 Planning next action from screenshot + Android state...")
+                # Phase 1: Dump XML and optionally build compact summary for LLM
+                xml_element_summary = ""
+                if USE_XML_ELEMENT_ACTIONS:
+                    root = dump_ui()
+                    if root is not None:
+                        from tools.adb_tools import build_xml_element_summary
+                        xml_element_summary = build_xml_element_summary(root)
                 # Pass previous test result to planner (for Test 2 to know Test 1 passed)
                 # Pass logger to planner for API call tracking
                 next_action = plan_next_action(
                     test["text"], screenshot_path, action_history,
                     previous_test_passed=previous_test_passed, test_id=test["id"],
-                    logger=logger
+                    logger=logger, target_package=target_package,
+                    xml_element_summary=xml_element_summary
                 )
                 
                 # Track if this action came from memory (RL)
@@ -194,7 +222,7 @@ def run_test_suite(
                 # Executor: Execute the action
                 print("🤖 Executing action...")
                 before_screenshot = screenshot_path
-                execution_result = execute_action(next_action, logger=logger)
+                execution_result = execute_action(next_action, logger=logger, target_package=target_package)
                 
                 # Get action source and intended success from execution result
                 action_source = execution_result.get("action_source", "FALLBACK_COORDS")
@@ -206,8 +234,10 @@ def run_test_suite(
                     failure_reason = execution_result.get('reason', 'Unknown error')
                     error_type = execution_result.get("error_type", "EXECUTION_FAILED")
                     
-                    # Record failure in memory for learning
+                    # Record failure in memory for learning (app-aware: separate DuckDuckGo vs Obsidian)
+                    app_key = "duckduckgo" if (target_package and "duckduckgo" in target_package.lower()) else "obsidian"
                     context = {
+                        "app": app_key,
                         "current_screen": next_action.get('_android_state', {}).get('current_screen', 'unknown'),
                         "test_goal": test["text"]
                     }
@@ -224,7 +254,7 @@ def run_test_suite(
                         ui_xml_path = None
                         try:
                             root = dump_ui()
-                            if root:
+                            if root is not None:
                                 xml_str = ET.tostring(root, encoding='unicode')
                                 ui_xml_path = f"xml_dumps/step_{step_count}_ui.xml"
                                 os.makedirs("xml_dumps", exist_ok=True)
@@ -250,7 +280,7 @@ def run_test_suite(
                         ui_xml_path = None
                         try:
                             root = dump_ui()
-                            if root:
+                            if root is not None:
                                 xml_str = ET.tostring(root, encoding='unicode')
                                 ui_xml_path = f"xml_dumps/step_{step_count}_ui.xml"
                                 os.makedirs("xml_dumps", exist_ok=True)
@@ -323,8 +353,10 @@ def run_test_suite(
             comparison = compare_with_expected(verdict, test["should_pass"])
             print(f"\n[TEST ID: {test['id']}] {comparison['message']}")
             
-            # Record outcome in memory for reinforcement learning
+            # Record outcome in memory for reinforcement learning (app-aware: separate DuckDuckGo vs Obsidian)
+            app_key = "duckduckgo" if (target_package and "duckduckgo" in target_package.lower()) else "obsidian"
             context = {
+                "app": app_key,
                 "current_screen": "test_complete",
                 "test_goal": test["text"]
             }
@@ -424,7 +456,21 @@ def run_test_suite(
             episode_filename = f"test_{test['id']}_{test_result.get('status', 'UNKNOWN').lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             episode_path = os.path.join("results", episode_filename)
             
-            # Create episode data with action history for replay
+            # Clean action_history for JSON: remove _execution_result (contains circular ref to action)
+            # and _android_state; keep only serializable fields needed for replay
+            def _serializable_action(a):
+                if not isinstance(a, dict):
+                    return a
+                out = {k: v for k, v in a.items() if k in (
+                    "action", "description", "text", "target", "x", "y", "element",
+                    "x1", "y1", "x2", "y2", "code", "seconds", "app", "reason"
+                )}
+                # Optionally add execution status as string (no circular ref)
+                if a.get("_execution_status") is not None:
+                    out["_execution_status"] = a.get("_execution_status")
+                return out
+            action_history_clean = [_serializable_action(a) for a in action_history]
+            
             episode_data = {
                 "test_id": test["id"],
                 "test_text": test["text"],
@@ -434,7 +480,7 @@ def run_test_suite(
                 "reason": test_result.get("reason", ""),
                 "details": test_result.get("details", ""),
                 "steps_taken": test_result.get("steps_taken", 0),
-                "action_history": action_history,  # Full action history for replay
+                "action_history": action_history_clean,
                 "final_screenshot": test_result.get("final_screenshot", ""),
                 "model": reasoning_model,
                 "vision_model": vision_model,
@@ -482,4 +528,9 @@ def run_test_suite(
 
 
 if __name__ == "__main__":
-    run_test_suite()
+    import argparse
+    parser = argparse.ArgumentParser(description="Run mobile QA test suite")
+    parser.add_argument("--app", choices=["obsidian", "duckduckgo"], default="obsidian", help="Target app (default: obsidian)")
+    parser.add_argument("--no-logging", action="store_true", help="Disable benchmark logging")
+    args = parser.parse_args()
+    run_test_suite(app=args.app, enable_logging=not args.no_logging)
