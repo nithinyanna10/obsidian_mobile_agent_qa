@@ -16,7 +16,7 @@ from collections import Counter
 
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL, REASONING_MODEL, OLLAMA_BASE_URL, USE_FUNCTION_CALLING, USE_REWARD_SELECTION, ENABLE_SUBGOAL_DETECTION, DISABLE_RL_FOR_BENCHMARKING
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, OPENAI_MODEL, REASONING_MODEL, OLLAMA_BASE_URL, USE_FUNCTION_CALLING, USE_REWARD_SELECTION, ENABLE_SUBGOAL_DETECTION, DISABLE_RL_FOR_BENCHMARKING, USE_XML_ELEMENT_ACTIONS
 from tools.adb_tools import detect_current_screen, get_ui_text, dump_ui, get_current_package_and_activity
 from tools.memory import memory
 from tools.llm_client import LLMClient
@@ -186,7 +186,7 @@ def get_android_state():
         # Extract structured info from XML dump
         try:
             root = dump_ui()
-            if root:
+            if root is not None:
                 input_fields = []
                 buttons = []
                 
@@ -261,7 +261,7 @@ def get_android_state():
     return state
 
 
-def plan_next_action(test_text, screenshot_path, action_history, previous_test_passed=False, execution_result=None, test_id=None, logger=None):
+def plan_next_action(test_text, screenshot_path, action_history, previous_test_passed=False, execution_result=None, test_id=None, logger=None, target_package=None, xml_element_summary=None):
     """
     Analyze screenshot + Android state and decide the next single action
     
@@ -270,6 +270,7 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
         screenshot_path: Path to current screenshot
         action_history: List of previous actions taken
         previous_test_passed: If True, previous test (Test 1) passed, so we're definitely in vault
+        xml_element_summary: Optional compact list of tappable/input elements (Phase 1 dump) for element-based actions
     
     Returns:
         Dictionary with single action OR {"action": "FAIL", "reason": "..."} if element not found
@@ -283,6 +284,25 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
         ui_text = android_state.get('ui_text', [])
         ui_text_lower = " ".join([t.lower() for t in ui_text])
         
+        # ===== DUCKDUCKGO: ENSURE WE'RE IN DUCKDUCKGO APP (don't let LLM tap Chrome or other apps) =====
+        if target_package and "duckduckgo" in target_package.lower():
+            pkg_act = get_current_package_and_activity()
+            current_pkg = (pkg_act.get("package") or "").lower() if pkg_act else ""
+            # If we already opened DuckDuckGo in the last 1–2 steps, don't open again (avoid loop when pkg_act returns None/unknown)
+            recent_open = any(
+                a.get("action") == "open_app" and "duckduckgo" in (a.get("app") or "").lower()
+                for a in action_history[-2:]
+            )
+            if recent_open:
+                pass  # Assume we're in DuckDuckGo, fall through to normal planning
+            elif not current_pkg or "duckduckgo" not in current_pkg:
+                print(f"  → DuckDuckGo test: not in DuckDuckGo app (current: {current_pkg or 'unknown'}), opening DuckDuckGo...")
+                return {
+                    "action": "open_app",
+                    "app": target_package,
+                    "description": "Open DuckDuckGo browser"
+                }
+        
         # ===== LOOP DETECTION DISABLED =====
         # Loop detection removed - let tests run for full 20 steps
         # The max_steps limit in main.py will handle stopping after 20 steps
@@ -292,7 +312,8 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
         # BUT: Skip RL patterns if benchmarking mode is enabled (for fair model comparison)
         successful_pattern = None
         if not DISABLE_RL_FOR_BENCHMARKING:
-            context = {"current_screen": android_state.get('current_screen', 'unknown'), "test_goal": test_text}
+            app_key = "duckduckgo" if (target_package and "duckduckgo" in target_package.lower()) else "obsidian"
+            context = {"app": app_key, "current_screen": android_state.get('current_screen', 'unknown'), "test_goal": test_text}
             successful_pattern = memory.get_successful_pattern(context)
         
         if successful_pattern and len(successful_pattern) > 0:
@@ -309,9 +330,22 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                 next_action_from_memory["_from_memory"] = True
                 return next_action_from_memory
             elif current_step >= len(successful_pattern):
-                # We've completed the pattern - check if test goal is achieved
+                # We've completed the pattern - check if goal achieved
                 print(f"  💾 Completed memory pattern ({len(successful_pattern)} steps), checking if goal achieved...")
                 # Continue to normal planning to verify completion
+        
+        # Break permission/notification dialog loop (e.g. DuckDuckGo - tapping Allow repeatedly)
+        if action_history and len(action_history) >= 2:
+            recent_descs = [a.get("description", "") for a in action_history[-3:]]
+            allow_taps = sum(1 for d in recent_descs if "allow" in d.lower())
+            if allow_taps >= 2:
+                if "allow" in ui_text_lower or "notification" in ui_text_lower or "permission" in ui_text_lower:
+                    print(f"  → Already tapped Allow 2+ times on permission dialog, pressing BACK to dismiss (break loop)")
+                    return {
+                        "action": "key",
+                        "code": 4,
+                        "description": "Press BACK to dismiss permission dialog (break loop)"
+                    }
         
         # CRITICAL: Check if we're in vault by package/activity (most reliable) - DO THIS FIRST
         pkg_act = get_current_package_and_activity()
@@ -527,7 +561,7 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
             print(f"  📄 Generating UI XML dump for Test {test_id} step...")
             try:
                 root = dump_ui()
-                if root:
+                if root is not None:
                     xml_str = ET.tostring(root, encoding='unicode')
                     os.makedirs("xml_dumps", exist_ok=True)
                     dump_file = f"xml_dumps/test{test_id}_step_{int(time.time())}.xml"
@@ -632,9 +666,76 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                         "description": "Go back to reach Meeting Notes page"
                     }
         
-        # ===== TEST 3: SETTINGS/APPEARANCE NAVIGATION =====
+        is_duckduckgo = bool(target_package and "duckduckgo" in target_package.lower())
+        # ===== DUCKDUCKGO: MENU (THREE DOTS TOP-RIGHT) + SETTINGS/PRIVACY =====
+        # DuckDuckGo browser: three-dots menu is TOP-RIGHT (not Obsidian's top-left sidebar)
+        if is_duckduckgo and ("settings" in test_text.lower() or "menu" in test_text.lower() or "privacy" in test_text.lower()):
+            # Test 4 requires Appearance/Theme screen; do not assert on main Settings only
+            test_requires_appearance = "appearance" in test_text.lower() or "theme" in test_text.lower()
+            if test_requires_appearance:
+                # Only assert when we're inside Appearance/Theme screen (theme options visible)
+                if any(k in ui_text_lower for k in ("appearance", "theme", "system default")):
+                    print(f"  ✅ DuckDuckGo: Appearance/Theme screen visible - test goal achieved.")
+                    return {"action": "assert", "description": "Appearance or Theme settings screen visible"}
+                # In main Settings but not in Appearance - tap Appearance or Theme
+                if any(k in ui_text_lower for k in ("settings", "privacy", "preferences")):
+                    print(f"  → DuckDuckGo: In Settings menu, tapping Appearance/Theme...")
+                    return {"action": "tap", "element": "Appearance", "description": "Tap Appearance or Theme in Settings", "x": 0, "y": 0}
+            else:
+                # Not Test 4: assert when any settings-like screen is visible
+                if any(k in ui_text_lower for k in ("settings", "privacy", "appearance", "theme", "preferences")):
+                    print(f"  ✅ DuckDuckGo: Settings/settings screen visible - test goal achieved.")
+                    return {"action": "assert", "description": "Settings or preferences screen visible"}
+            # Just opened menu - tap Settings or Privacy from XML
+            if action_history:
+                last = action_history[-1]
+                last_desc = (last.get("description") or "").lower()
+                if ("three dots" in last_desc or "menu" in last_desc or "top-right" in last_desc or
+                    (last.get("action") == "tap" and last.get("x", 0) > 500 and last.get("y", 0) < 400)):
+                    print(f"  → DuckDuckGo: Menu opened, tapping Settings or Privacy...")
+                    return {"action": "tap", "element": "Settings", "description": "Tap Settings in menu", "x": 0, "y": 0}
+            # Open three-dots menu (top-right, not Obsidian's top-left)
+            print(f"  → DuckDuckGo: Tapping three dots menu (top-right)...")
+            from tools.adb_tools import get_screen_size
+            screen_size = get_screen_size()
+            if screen_size:
+                w, h = screen_size
+                return {
+                    "action": "tap",
+                    "x": int(w * 0.92),
+                    "y": int(h * 0.08),
+                    "description": "Tap three dots menu (top right)"
+                }
+            return {"action": "tap", "x": 994, "y": 197, "description": "Tap three dots menu (top right)"}
+        
+        # ===== DUCKDUCKGO TEST 3: EXPORT SEARCH HISTORY TO PDF (expected not found) =====
+        # Look ONLY for "Export search history to PDF"; if menu is open, return FAIL (don't tap Duck.ai or other menu items)
+        if is_duckduckgo and "export" in test_text.lower() and "pdf" in test_text.lower():
+            if action_history:
+                last = action_history[-1]
+                last_desc = (last.get("description") or "").lower()
+                if ("three dots" in last_desc or "menu" in last_desc or "top-right" in last_desc or
+                    (last.get("action") == "tap" and last.get("x", 0) > 500 and last.get("y", 0) < 400)):
+                    # Menu is open - "Export search history to PDF" does not exist in standard app; return FAIL (do not tap other items)
+                    if "export search history" in ui_text_lower or ("export" in ui_text_lower and "pdf" in ui_text_lower):
+                        return {"action": "tap", "element": "Export search history to PDF", "description": "Tap Export search history to PDF", "x": 0, "y": 0}
+                    print(f"  ✅ DuckDuckGo Test 3: 'Export search history to PDF' not in menu (expected) - returning FAIL")
+                    return {
+                        "action": "FAIL",
+                        "reason": "Export search history to PDF button not found in menu (expected for standard DuckDuckGo mobile app)"
+                    }
+            # Not in menu yet - open three-dots menu first
+            print(f"  → DuckDuckGo Test 3: Opening menu to look for 'Export search history to PDF'...")
+            from tools.adb_tools import get_screen_size
+            screen_size = get_screen_size()
+            if screen_size:
+                w, h = screen_size
+                return {"action": "tap", "x": int(w * 0.92), "y": int(h * 0.08), "description": "Tap three dots menu (top right)"}
+            return {"action": "tap", "x": 994, "y": 197, "description": "Tap three dots menu (top right)"}
+        
+        # ===== TEST 3: SETTINGS/APPEARANCE NAVIGATION (OBSIDIAN ONLY) =====
         # Test 3 requires: Button below time → Settings → Appearance → Verify icon color
-        if "settings" in test_text.lower() and "appearance" in test_text.lower():
+        if "settings" in test_text.lower() and "appearance" in test_text.lower() and not is_duckduckgo:
             
             # CRITICAL: Check if we just tapped Appearance - we're now in Appearance screen
             just_tapped_appearance = False
@@ -856,7 +957,7 @@ If you see Settings screen elements, return {{"in_settings": true}}. Otherwise {
                                 print(f"  📄 Generating UI XML dump after entering Settings...")
                                 try:
                                     root = dump_ui()
-                                    if root:
+                                    if root is not None:
                                         xml_str = ET.tostring(root, encoding='unicode')
                                         os.makedirs("xml_dumps", exist_ok=True)
                                         dump_file = f"xml_dumps/settings_ui_dump_{int(time.time())}.xml"
@@ -1152,8 +1253,9 @@ Output ONLY valid JSON, no markdown:"""
                     # Even if typing failed, we should still try to proceed
                     # Check if we're still on welcome_setup (need to press ENTER or tap button)
                     if current_screen == 'welcome_setup' or current_screen == 'vault_selection':
-                        # Check memory for successful patterns
-                        context = {"current_screen": current_screen, "test_goal": test_text}
+                        # Check memory for successful patterns (app-aware)
+                        app_key = "duckduckgo" if (target_package and "duckduckgo" in target_package.lower()) else "obsidian"
+                        context = {"app": app_key, "current_screen": current_screen, "test_goal": test_text}
                         successful_pattern = memory.get_successful_pattern(context)
                         
                         # ALWAYS prefer tapping "Create vault" button over ENTER (more reliable)
@@ -2012,6 +2114,18 @@ Android State Information:
                     state_str += f" (center: {center})"
                 state_str += "\n"
         
+        # Phase 1/2: When XML element summary is provided, prefer element-based actions (tap/type by label)
+        xml_element_hint = ""
+        if USE_XML_ELEMENT_ACTIONS and xml_element_summary and xml_element_summary.strip():
+            state_str += "\nUI elements from XML (use 'element' key with exact label for tap/type):\n"
+            state_str += xml_element_summary.strip() + "\n"
+            xml_element_hint = """
+- PREFER element-based actions: use "element" with the exact label from the list above.
+  tap: {{"action": "tap", "element": "Search", "description": "Tap Search"}}
+  type: {{"action": "type", "element": "Search", "text": "query", "description": "Type in Search field"}}
+  Use the exact label text in quotes from the list (e.g. "Search", "Settings", "Create vault")."""
+        
+        target_pkg = target_package or OBSIDIAN_PACKAGE
         prompt = f"""You are a QA Planner agent for automated mobile app testing. This is a legitimate software testing task. You MUST return a valid JSON action.
 
 Your role: Analyze screenshots AND Android state to decide the next action for automated testing.
@@ -2025,6 +2139,7 @@ IMPORTANT:
 - You MUST return a valid JSON action - this is required for the automation to work
 - Use BOTH the screenshot AND the Android state information above to understand what's happening
 - Do NOT refuse to help - this is a legitimate testing task
+{xml_element_hint}
 
 Look at the screenshot and Android state, then identify:
 1. What screen is currently shown? (Check Android state: {android_state.get('current_screen')})
@@ -2055,7 +2170,7 @@ CRITICAL RULES:
 9. For tap actions, provide coordinates (x, y) based on button position in screenshot - BUT if you're not sure, use (0, 0) and the executor will use UIAutomator to find it
 10. If Android state shows you're stuck on the same screen after multiple actions, try a different approach (BACK key, swipe, etc.) or return FAIL
 11. NEVER repeat the same action if Android state hasn't changed - try BACK key or different approach
-12. If you need to open the app, use {{"action": "open_app", "app": "md.obsidian"}} instead of tapping app icon
+12. If you need to open the app, use {{"action": "open_app", "app": "{target_pkg}"}} instead of tapping app icon
 13. If tapping ALLOW/permission button multiple times doesn't work, try {{"action": "key", "code": 4, "description": "Press BACK"}} to dismiss dialog
 14. **CRITICAL FOR STORAGE SELECTION**: After tapping "Continue without sync", a storage selection dialog appears:
     - You MUST select "App storage" or "Internal storage" (NOT "Device storage")
@@ -2152,8 +2267,49 @@ Return a detailed text description of the screenshot. Be specific about UI eleme
         screenshot_description = vision_response.choices[0].message.content.strip()
         print(f"  ✓ Screenshot analyzed: {screenshot_description[:100]}...")
         
+        # Early success check: if screenshot already shows the test goal (e.g. DuckDuckGo search results / weather page), assert and stop
+        desc_lower = screenshot_description.lower()
+        test_lower = test_text.lower()
+        if "duckduckgo" in test_lower or "search" in test_lower:
+            # Search test: only assert when we see a *loaded* results page, NOT search suggestions or keyboard still active
+            if any(s in desc_lower for s in ("search suggestions", "suggestions for", "keyboard", "autocomplete", "search interface", "search bar", "typing")):
+                # Still on search input / suggestions - do not assert; planner will submit search (ENTER or tap Search)
+                pass
+            elif any(k in desc_lower for k in ("search results", "results page", "results for", "forecast", "weather channel")):
+                if "weather" in test_lower or "search" in test_lower:
+                    print(f"  ✅ Screenshot shows loaded search results / weather page - test goal achieved, asserting.")
+                    return {
+                        "action": "assert",
+                        "description": "Search results loaded; weather/results page visible"
+                    }
+        
         # STEP 2: Reasoning model plans action based on description
         print(f"  🧠 Step 2: Planning action with reasoning model ({current_llm_client.reasoning_model})...")
+        # Shorter CRITICAL RULES for DuckDuckGo to reduce API usage (no vault/note/Print to PDF/Appearance)
+        _is_obsidian = target_package and "obsidian" in target_package.lower()
+        if _is_obsidian:
+            critical_rules_section = """CRITICAL RULES:
+1. Return EXACTLY ONE action - the immediate next step
+2. If Android state shows has_edittext=true or Input Fields are detected, you should type text, not tap
+3. Use the Input Fields information to know which field to type into (check hints like "Vault name", "Search", etc.)
+4. Use the Buttons information to get precise coordinates - if a button is listed, you can use its center coordinates for tapping
+5. If you see a permission dialog (e.g., "Allow access"), tap "Allow" or "OK" ONCE - if it doesn't work, try BACK key
+6. If you see "Create vault" button, tap it. If you see "App storage" or "Internal storage", tap it. If you see "USE THIS FOLDER" button, tap it.
+7. If you see "Create note" or "New note" button, tap it. If you see an input field and need to type, use type action with target="title" or target="body"
+8. If the test goal is achieved (e.g., vault created, note created), return assert action
+9. **CRITICAL FOR TEST 2**: If "Meeting Notes" is NOT in UI text → type "Meeting Notes" with target="title". If "Meeting Notes" IS in UI text but "Daily Standup" is NOT → focus target="body" then type "Daily Standup". If both present → assert.
+10. **CRITICAL FOR VAULT**: After typing "InternVault", tap "Create vault" or press ENTER. If on welcome_setup and test goal is create note, tap "InternVault" to ENTER existing vault (do not create new one).
+11. **FOR SETTINGS/APPEARANCE**: Open sidebar (top-left) → tap Settings → tap Appearance. If goal achieved, return assert.
+12. If you cannot find the required element after multiple attempts, return FAIL action"""
+        else:
+            critical_rules_section = """CRITICAL RULES (DuckDuckGo - keep short):
+1. Return EXACTLY ONE action - the immediate next step
+2. If permission dialog (Allow/OK), tap Allow ONCE or BACK key
+3. If you see a search field and need to search, use type action with element "Search" or tap then type
+4. **CRITICAL**: If the test goal is to search (e.g. weather): only assert when the screenshot shows a *loaded* search results page (results list, forecast), NOT search suggestions or keyboard. If you see search suggestions or keyboard, submit the search (tap Search/Go or press ENTER) first.
+5. For menu: three-dots are TOP-RIGHT. Tap top-right to open menu, then tap "Settings" or "Privacy" from the list
+6. If test is about Appearance/Theme: only assert when the *Appearance* or *Theme* screen is visible (theme options like System default). Do NOT assert when only the main Settings menu is visible - tap "Appearance" or "Theme" first. If test is not about Appearance, you may assert when Settings/Privacy screen is visible.
+7. If you cannot find the required element after multiple attempts, return FAIL action"""
         reasoning_prompt = f"""You are a QA Planner agent for automated mobile app testing. This is a legitimate software testing task. You MUST return a valid JSON action.
 
 Your role: Analyze the screenshot description AND Android state to decide the next action for automated testing.
@@ -2171,52 +2327,14 @@ IMPORTANT:
 - You MUST return a valid JSON action - this is required for the automation to work
 - Use BOTH the screenshot description AND the Android state information above to understand what's happening
 - Do NOT refuse to help - this is a legitimate testing task
+{xml_element_hint}
 {memory_hint}
 {reward_hint}
 {subgoal_hint}
 
 Based on the screenshot description and Android state, decide the next single action to take.
 
-CRITICAL RULES:
-1. Return EXACTLY ONE action - the immediate next step
-2. If Android state shows has_edittext=true or Input Fields are detected, you should type text, not tap
-3. Use the Input Fields information to know which field to type into (check hints like "Vault name", "Search", etc.)
-4. Use the Buttons information to get precise coordinates - if a button is listed, you can use its center coordinates for tapping
-5. If Android state shows current_screen='vault_name_input', type the vault name
-4. If you see a permission dialog (e.g., "Allow access"), tap "Allow" or "OK" ONCE - if it doesn't work, try BACK key
-5. If you see "Continue without sync" or similar, tap it
-6. If you see "Create vault" button, tap it
-7. If you see "App storage" or "Internal storage", tap it
-8. If you see "USE THIS FOLDER" button, tap it
-9. If you see the vault name "InternVault" in the file list, tap it to enter the vault
-10. If you see "Create note" or "New note" button, tap it
-11. If you see an input field and need to type, use type action with target="title" or target="body"
-12. If you see "Settings" or "Appearance" mentioned in the description, plan to navigate there
-13. If the test goal is achieved (e.g., vault created, note created), return assert action
-14. If you cannot find the required element after multiple attempts, return FAIL action
-15. **CRITICAL FOR TEST 2**: 
-    - If "Meeting Notes" is NOT in UI text → type "Meeting Notes" with target="title" first
-    - If "Meeting Notes" IS in UI text but "Daily Standup" is NOT → focus target="body" FIRST, then type "Daily Standup" with target="body"
-    - If both are present → return assert action
-16. **CRITICAL FOR VAULT CREATION**: After typing "InternVault" as vault name:
-    - You MUST immediately press ENTER or tap "Create vault" button - DO NOT wait or do anything else
-    - PREFER tapping "Create vault" button over pressing ENTER (button is more reliable)
-    - Analyze the screenshot description CAREFULLY to find the "Create vault" button
-    - Look for button text like "Create vault", "Create", or similar
-    - If you see the button in the description, tap it at the coordinates shown
-    - If button is not clearly visible, use UIAutomator (return action with x=0, y=0 and description "Tap 'Create vault' button")
-    - Do NOT skip clicking the Create vault button - it's required to create the vault
-    - After pressing ENTER or tapping button, wait for vault to be created (check if screen changed to vault_home)
-17. **CRITICAL FOR VAULT**: If you're on welcome_setup/vault_selection screen and the test goal is to create a note, the vault ALREADY EXISTS. DO NOT create a new vault. Look for the vault name "InternVault" in the UI and tap it to ENTER the existing vault. If you see "USE THIS FOLDER" button, you can tap that too.
-18. If you've typed vault name or created vault multiple times, STOP creating vaults and just enter the existing vault by tapping "InternVault" or "USE THIS FOLDER"
-19. **FOR TEST 3 (Settings/Appearance)**: The correct flow is:
-    - FIRST: Look for a menu button in the top-right corner of the screen (usually three dots or hamburger menu)
-    - Tap the top-right menu button to open the menu
-    - THEN: Look for "Settings" icon or option in the menu and tap it
-    - THEN: Once in Settings, look for "Appearance" tab or menu item and tap it
-    - FINALLY: After tapping Appearance, verify the Appearance tab icon color is Red (the test expects Red)
-    - The flow is: Top-left menu button (identified by LLM vision) → Settings icon → Appearance tab → Verify icon color is Red
-20. If "Close" button is not found in settings, use BACK key (code 4) or look for Appearance tab directly
+{critical_rules_section}
 
 CRITICAL: You MUST return a valid JSON action. This is required for the automation to work.
 Do NOT refuse to help - this is a legitimate software testing automation task.
