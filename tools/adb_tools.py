@@ -344,56 +344,20 @@ def find_element_by_text(text):
                 if bounds and bounds != "[0,0][0,0]":
                     return bounds
     
-    # General search: try all search terms
+    # General search: try all search terms (text, content-desc, resource-id, hint)
     for search_term in search_terms:
         for node in root.iter("node"):
             node_text = node.attrib.get("text", "").lower().strip()
             content_desc = node.attrib.get("content-desc", "").lower().strip()
             resource_id = node.attrib.get("resource-id", "").lower()
-            
-            # Check if search term matches text, content-desc, or resource-id
-            if (search_term in node_text or 
-                search_term in content_desc or 
-                search_term in resource_id):
+            hint = node.attrib.get("hint", "").lower().strip()
+            if (search_term in node_text or
+                search_term in content_desc or
+                search_term in resource_id or
+                search_term in hint):
                 bounds = node.attrib.get("bounds")
                 if bounds and bounds != "[0,0][0,0]":
                     return bounds
-    
-    return None
-
-
-def find_element_by_attribute(attr_name, attr_value, partial_match=True):
-    """
-    Find UI element by attribute (content-desc, resource-id, etc.)
-    
-    Args:
-        attr_name: Attribute name (e.g., "content-desc", "resource-id")
-        attr_value: Value to search for (case-insensitive)
-        partial_match: If True, match if value contains search term
-    
-    Returns:
-        Bounds string like "[96,1344][984,1476]" or None if not found
-    """
-    root = dump_ui()
-    if root is None:
-        return None
-    
-    search_value = attr_value.lower().strip()
-    
-    for node in root.iter("node"):
-        attr_val = node.attrib.get(attr_name, "").lower().strip()
-        if attr_val:
-            if partial_match:
-                if search_value in attr_val:
-                    bounds = node.attrib.get("bounds")
-                    if bounds and bounds != "[0,0][0,0]":
-                        return bounds
-            else:
-                if search_value == attr_val:
-                    bounds = node.attrib.get("bounds")
-                    if bounds and bounds != "[0,0][0,0]":
-                        return bounds
-    
     return None
 
 
@@ -479,6 +443,70 @@ def bounds_to_center(bounds):
     except:
         pass
     return (None, None)
+
+
+def build_xml_element_summary(root, max_tappable=20, max_input=10):
+    """
+    Build a compact summary of tappable elements and input fields from UI XML root.
+    Used for Phase 1: optional compact summary sent to the LLM.
+    
+    Args:
+        root: ElementTree root from dump_ui()
+        max_tappable: Max number of tappable entries to include
+        max_input: Max number of input field entries to include
+    
+    Returns:
+        String with one line per element: "tap: label (x, y)" or "input: hint (x, y)"
+    """
+    if root is None:
+        return ""
+    lines = []
+    tappable_seen = set()
+    input_seen = set()
+    for node in root.iter("node"):
+        bounds = node.attrib.get("bounds", "")
+        if not bounds or bounds == "[0,0][0,0]":
+            continue
+        cx, cy = bounds_to_center(bounds)
+        if cx is None:
+            continue
+        class_name = node.attrib.get("class", "").lower()
+        text = node.attrib.get("text", "").strip()
+        content_desc = node.attrib.get("content-desc", "").strip()
+        hint = node.attrib.get("hint", "").strip()
+        clickable = node.attrib.get("clickable", "false").lower() == "true"
+        if "edittext" in class_name:
+            label = hint or text or content_desc or "Input"
+            key = (label.lower(), cx, cy)
+            if key not in input_seen and len(input_seen) < max_input:
+                input_seen.add(key)
+                lines.append(f"input: \"{label}\" ({cx}, {cy})")
+        else:
+            label = text or content_desc
+            if not label:
+                continue
+            key = (label.lower(), cx, cy)
+            if key not in tappable_seen and (clickable or "button" in class_name or "image" in class_name) and len(tappable_seen) < max_tappable:
+                tappable_seen.add(key)
+                lines.append(f"tap: \"{label}\" ({cx}, {cy})")
+    return "\n".join(lines) if lines else ""
+
+
+def resolve_element_to_center(label):
+    """
+    Resolve a UI element label (text, content-desc, or hint) to center coordinates.
+    Used by executor when action has "element" key (Phase 2).
+    
+    Args:
+        label: Text to search for (case-insensitive, partial match on text/content-desc/hint)
+    
+    Returns:
+        Tuple (x, y) or (None, None) if not found
+    """
+    bounds = find_element_by_text(label)
+    if not bounds:
+        return (None, None)
+    return bounds_to_center(bounds)
 
 
 def detect_current_screen():
