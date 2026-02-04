@@ -95,6 +95,13 @@ The run will:
 - **Executor** – Runs actions via ADB (tap, type, focus, key, swipe, wait, open_app). Can use UIAutomator to resolve (0,0) taps to elements. Captures screenshots and optional UI dumps.  
 - **Supervisor** – Compares final state (screenshot + UI) to test expectation and marks PASS/FAIL.
 
+## 📝 Prompts
+
+- **Vision prompt** – Asks the model to describe the mobile app screenshot (screen/UI, buttons, text fields, on-screen text). Used in `agents/planner.py` for the first step of each planning cycle.
+- **Reasoning prompt** – Includes Android state (current_screen, input fields, buttons), test goal, action history, and few-shot examples; asks for a single JSON action. Used in `agents/planner.py` for the second step.
+- **Few-shot examples** – Stored in `prompts/few_shot_examples.txt`; loaded and appended to the reasoning prompt. Edit this file to add or change example action sequences (e.g. create vault, create note, open Settings).
+- To change planner behavior, edit the prompts in `agents/planner.py` and/or `prompts/few_shot_examples.txt`.
+
 ## 📝 Configuration
 
 In `config.py` (or env):
