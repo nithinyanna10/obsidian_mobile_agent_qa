@@ -17,8 +17,11 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 # App package names
 OBSIDIAN_PACKAGE = "md.obsidian"
 DUCKDUCKGO_PACKAGE = "com.duckduckgo.mobile.android"
+SETTINGS_PACKAGE = "com.android.settings"
+# Calendar app (Fossify Calendar, Google Calendar, etc. - set to your installed app's package)
+CALENDAR_PACKAGE = os.getenv("CALENDAR_PACKAGE", "org.fossify.calendar")
 
-# Target app for this run (set by main.py when using --app duckduckgo)
+# Target app for this run (set by main.py when using --app)
 # Read at runtime so main can set os.environ before first use
 def get_target_package():
     return os.getenv("TARGET_PACKAGE", OBSIDIAN_PACKAGE)
