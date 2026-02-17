@@ -1,111 +1,7 @@
 {
-  "successful_patterns": {
-    "duckduckgo:test_complete:in duckduckgo, open the menu (three dots or hambur": [
-      {
-        "actions": [
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
-          },
-          {
-            "action": "tap",
-            "description": "Tap three dots menu (top right)",
-            "x": 993,
-            "y": 192
-          },
-          {
-            "action": "tap",
-            "description": "Tap Settings in menu",
-            "x": 0,
-            "y": 0
-          },
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
-          },
-          {
-            "action": "tap",
-            "description": "Tap three dots menu (top right)",
-            "x": 993,
-            "y": 192
-          },
-          {
-            "action": "tap",
-            "description": "Tap Settings in menu",
-            "x": 0,
-            "y": 0
-          },
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
-          },
-          {
-            "action": "tap",
-            "description": "Tap three dots menu (top right)",
-            "x": 993,
-            "y": 192
-          },
-          {
-            "action": "tap",
-            "description": "Tap Settings in menu",
-            "x": 0,
-            "y": 0
-          },
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
-          },
-          {
-            "action": "tap",
-            "description": "Tap three dots menu (top right)",
-            "x": 993,
-            "y": 192
-          },
-          {
-            "action": "tap",
-            "description": "Tap Settings in menu",
-            "x": 0,
-            "y": 0
-          },
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
-          }
-        ],
-        "outcome": "Test 2 passed",
-        "timestamp": "2026-02-03T19:34:40.368136",
-        "count": 1
-      }
-    ],
-    "duckduckgo:test_complete:in duckduckgo, open the main menu and find the 'ex": [
-      {
-        "actions": [
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
-          }
-        ],
-        "outcome": "Test 3 correctly failed",
-        "timestamp": "2026-02-03T19:35:28.856291",
-        "count": 1
-      }
-    ],
-    "duckduckgo:test_complete:in duckduckgo settings, go to appearance (or theme": [
-      {
-        "actions": [
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
-          }
-        ],
-        "outcome": "Test 4 correctly failed",
-        "timestamp": "2026-02-03T19:36:23.671631",
-        "count": 1
-      }
-    ]
-  },
+  "successful_patterns": {},
   "failed_patterns": {
-    "duckduckgo:test_complete:open duckduckgo browser, tap the search bar at the": [
+    "duckduckgo:unknown:open duckduckgo browser, tap the search bar at the": [
       {
         "actions": [
           {
@@ -114,15 +10,13 @@
           },
           {
             "action": "tap",
-            "description": "Tap 'Allow' to grant notification permission"
+            "description": "Tap 'Allow' to grant notification permission",
+            "element": "Allow"
           },
           {
             "action": "tap",
-            "description": "Tap 'Allow' to grant notification permission"
-          },
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
+            "description": "Tap 'Allow' to grant notification permission",
+            "element": "Allow"
           },
           {
             "action": "key",
@@ -131,59 +25,51 @@
           },
           {
             "action": "tap",
-            "description": "Tap 'Let's do it!' button to proceed with the setup"
-          },
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
+            "description": "Tap 'Let's do it!' button to proceed with the DuckDuckGo browser setup",
+            "element": "Let's do it!"
           },
           {
             "action": "tap",
-            "description": "Tap 'Choose Your Browser' button to proceed with browser selection"
+            "description": "Tap 'Choose Your Browser' button to proceed with browser selection",
+            "element": "Choose Your Browser"
           },
           {
             "action": "tap",
-            "description": "Select DuckDuckGo as the default browser"
-          },
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
-          },
-          {
-            "action": "tap",
-            "description": "Tap 'Set as default' button to confirm DuckDuckGo as the default browser"
-          },
-          {
-            "action": "tap",
-            "description": "Tap 'Next' button to proceed to the next step"
-          },
-          {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
-          },
-          {
-            "action": "tap",
-            "description": "Tap 'Next' button to proceed to the next step"
+            "description": "Tap 'Next' button to proceed with the setup",
+            "element": "Next"
           },
           {
             "action": "type",
             "description": "Type 'weather' in the Search field",
-            "text": "weather"
+            "text": "weather",
+            "element": "Search"
           },
           {
-            "action": "open_app",
-            "description": "Open DuckDuckGo browser"
+            "action": "key",
+            "description": "Press ENTER to submit search",
+            "code": 66
+          },
+          {
+            "action": "tap",
+            "description": "Tap Search or Go to submit",
+            "x": 0,
+            "y": 0,
+            "element": "Search"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Got it!' button to dismiss DuckDuckGo notification banner",
+            "element": "Got it!"
           }
         ],
-        "reason": "Test 1 unexpected result: FAIL",
-        "timestamp": "2026-02-03T19:28:14.412694",
+        "reason": "Element not found for 'Tap 'Got it!' button to dismiss DuckDuckGo notification banner' and no valid coordinates provided",
+        "timestamp": "2026-02-03T23:33:52.970895",
         "count": 1
       }
     ]
   },
   "action_rewards": {
-    "open_app": 0.081902,
-    "tap": 0.11390655800000003
+    "tap": -0.05
   },
-  "last_updated": "2026-02-03T19:36:23.671668"
+  "last_updated": "2026-02-03T23:33:52.971368"
 }
