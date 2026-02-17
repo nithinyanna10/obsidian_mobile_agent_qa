@@ -1,0 +1,236 @@
+{
+  "successful_patterns": {},
+  "failed_patterns": {
+    "unknown:open the calendar app and verify you are on the ma": [
+      {
+        "actions": [
+          {
+            "action": "open_app",
+            "description": "Open Calendar app"
+          }
+        ],
+        "reason": "Unknown error",
+        "timestamp": "2026-02-06T14:52:34.079670",
+        "count": 2
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app",
+            "description": "Open Calendar app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Calendar' to open the Calendar app",
+            "element": "Calendar"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          }
+        ],
+        "reason": "Unknown error",
+        "timestamp": "2026-02-06T14:53:50.828874",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app",
+            "description": "Open Calendar app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Calendar' to open the Calendar app",
+            "element": "Calendar"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Search",
+            "element": "Search"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          }
+        ],
+        "reason": "Unknown error",
+        "timestamp": "2026-02-06T14:55:06.080880",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app",
+            "description": "Open Calendar app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Calendar' to open the Calendar app",
+            "element": "Calendar"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Search",
+            "element": "Search"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          }
+        ],
+        "reason": "Unknown error",
+        "timestamp": "2026-02-06T14:55:38.985628",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app",
+            "description": "Open Calendar app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Calendar' to open the Calendar app",
+            "element": "Calendar"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Search",
+            "element": "Search"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Back to exit search mode and return to the main calendar view",
+            "element": "Back"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          }
+        ],
+        "reason": "Unknown error",
+        "timestamp": "2026-02-06T14:56:52.103729",
+        "count": 1
+      },
+      {
+        "actions": [
+          {
+            "action": "open_app",
+            "description": "Open Calendar app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap 'Calendar' to open the Calendar app",
+            "element": "Calendar"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Search",
+            "element": "Search"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Back to exit search mode and return to the main calendar view",
+            "element": "Back"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Settings icon to open settings menu",
+            "element": "Settings"
+          }
+        ],
+        "reason": "Unknown error",
+        "timestamp": "2026-02-06T14:57:23.168213",
+        "count": 1
+      }
+    ],
+    "test_complete:open the calendar app and verify you are on the ma": [
+      {
+        "actions": [
+          {
+            "action": "open_app",
+            "description": "Open Calendar app"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Calendar app icon to open the Calendar app",
+            "element": "Calendar"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Calendar app icon to open the Calendar app",
+            "element": "Calendar"
+          },
+          {
+            "action": "tap",
+            "description": "Tap Calendar app icon to open the Calendar app",
+            "element": "Calendar"
+          }
+        ],
+        "reason": "Test 1 unexpected result: FAIL",
+        "timestamp": "2026-02-06T15:03:07.171762",
+        "count": 1
+      }
+    ]
+  },
+  "action_rewards": {
+    "open_app": -0.095,
+    "tap": -0.20475500000000002
+  },
+  "last_updated": "2026-02-06T15:03:07.171805"
+}
