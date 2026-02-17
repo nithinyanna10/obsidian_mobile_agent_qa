@@ -132,6 +132,15 @@ def open_app(package_name):
     Args:
         package_name: Android package name (e.g., "md.obsidian")
     """
+    if "com.android.settings" in package_name:
+        adb("shell am start -n com.android.settings/.Settings")
+        time.sleep(2)
+        return
+    # Calendar apps: use am start (monkey often returns 252 for these)
+    if "calendar" in package_name.lower() or "simplemobiletools" in package_name.lower() or "fossify" in package_name.lower():
+        adb(f"shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {package_name}")
+        time.sleep(2)
+        return
     adb(f"shell monkey -p {package_name} -c android.intent.category.LAUNCHER 1")
     time.sleep(3)  # Wait for app to launch
 
@@ -530,7 +539,14 @@ def detect_current_screen():
                 return {"current_screen": "welcome_setup", "package": "md.obsidian"}
             elif "VaultSelectionActivity" in output:
                 return {"current_screen": "vault_selection", "package": "md.obsidian"}
-        
+        if "duckduckgo" in output.lower():
+            return {"current_screen": "duckduckgo_browser", "package": "com.duckduckgo.mobile.android", "activity": "unknown"}
+        if "com.android.settings" in output:
+            return {"current_screen": "android_settings", "package": "com.android.settings", "activity": "unknown"}
+        if "fossify.calendar" in output or "simplemobiletools.calendar" in output or "com.google.android.calendar" in output:
+            pkg = "org.fossify.calendar" if "fossify" in output else "com.simplemobiletools.calendar" if "simplemobiletools" in output else "com.google.android.calendar"
+            return {"current_screen": "calendar", "package": pkg, "activity": "unknown"}
+
         return {"current_screen": "unknown"}
     except:
         return {"current_screen": "unknown"}
@@ -545,8 +561,18 @@ def get_current_package_and_activity():
     """
     try:
         result = adb("shell dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp'")
-        output = result.stdout
-        
+        output = result.stdout or ""
+        # Fallback: if app is clearly in focus, return it (avoids re-open loop when parsing fails)
+        if "duckduckgo" in output.lower():
+            return {"package": "com.duckduckgo.mobile.android", "activity": "unknown"}
+        if "com.android.settings" in output:
+            return {"package": "com.android.settings", "activity": "unknown"}
+        if "fossify.calendar" in output:
+            return {"package": "org.fossify.calendar", "activity": "unknown"}
+        if "simplemobiletools.calendar" in output:
+            return {"package": "com.simplemobiletools.calendar", "activity": "unknown"}
+        if "com.google.android.calendar" in output:
+            return {"package": "com.google.android.calendar", "activity": "unknown"}
         # Extract package/activity from output
         # Format: "mCurrentFocus=Window{... package/activity}"
         if "/" in output:
@@ -554,25 +580,30 @@ def get_current_package_and_activity():
             if len(parts) >= 2:
                 package_part = parts[0].split()[-1] if " " in parts[0] else parts[0]
                 activity_part = parts[1].split()[0].split("}")[0] if "}" in parts[1] else parts[1].split()[0]
-                
-                return {
-                    "package": package_part.strip(),
-                    "activity": activity_part.strip()
-                }
-    except:
+                pkg = package_part.strip()
+                if pkg:
+                    return {"package": pkg, "activity": activity_part.strip()}
+    except Exception:
         pass
     return None
 
 
 def reset_app(package_name="md.obsidian"):
     """
-    Reset app state by clearing app data
+    Reset app state by clearing app data (or force-stop + launch for system apps)
     Useful for ensuring clean state between tests
     
     Args:
         package_name: Android package name (e.g., "md.obsidian")
     """
     try:
+        # System apps (e.g. Settings) often cannot be cleared; just force-stop and relaunch
+        if "com.android.settings" in package_name:
+            adb(f"shell am force-stop {package_name}")
+            time.sleep(1)
+            adb(f"shell am start -n com.android.settings/.Settings")
+            time.sleep(2)
+            return
         adb(f"shell pm clear {package_name}")
         time.sleep(2)  # Wait for reset to complete
     except Exception as e:
