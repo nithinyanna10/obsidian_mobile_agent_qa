@@ -173,8 +173,9 @@ def get_android_state():
     }
     
     try:
-        # Get current screen from activity
-        state["current_screen"] = detect_current_screen()
+        # Get current screen from activity (always store a string for memory/RL keys)
+        detected = detect_current_screen()
+        state["current_screen"] = (detected.get("current_screen", "unknown") if isinstance(detected, dict) else "unknown")
         
         # Get UI text from uiautomator dump
         try:
@@ -288,13 +289,19 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
         if target_package and "duckduckgo" in target_package.lower():
             pkg_act = get_current_package_and_activity()
             current_pkg = (pkg_act.get("package") or "").lower() if pkg_act else ""
-            # If we already opened DuckDuckGo in the last 1–2 steps, don't open again (avoid loop when pkg_act returns None/unknown)
+            # Don't re-open if we already opened recently OR did any in-app action (tap/type/key) recently - avoids reset loop
             recent_open = any(
                 a.get("action") == "open_app" and "duckduckgo" in (a.get("app") or "").lower()
-                for a in action_history[-2:]
+                for a in action_history[-3:]
+            )
+            recent_in_app = any(
+                a.get("action") in ("tap", "type", "key") for a in action_history[-5:]
             )
             if recent_open:
                 pass  # Assume we're in DuckDuckGo, fall through to normal planning
+            elif recent_in_app and len(action_history) >= 2:
+                # We've been interacting with the app (Allow, Next, type weather, etc.) - stay in app, don't re-open
+                pass
             elif not current_pkg or "duckduckgo" not in current_pkg:
                 print(f"  → DuckDuckGo test: not in DuckDuckGo app (current: {current_pkg or 'unknown'}), opening DuckDuckGo...")
                 return {
@@ -302,7 +309,43 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                     "app": target_package,
                     "description": "Open DuckDuckGo browser"
                 }
-        
+
+        # ===== SETTINGS: ENSURE WE'RE IN ANDROID SETTINGS APP =====
+        if target_package and "settings" in target_package.lower():
+            pkg_act = get_current_package_and_activity()
+            current_pkg = (pkg_act.get("package") or "").lower() if pkg_act else ""
+            recent_open = any(a.get("action") == "open_app" for a in action_history[-2:])
+            recent_in_app = any(a.get("action") in ("tap", "type", "key") for a in action_history[-5:])
+            # Don't re-open if we're already in Settings or recently did in-app actions (avoid loop)
+            if recent_open:
+                pass
+            elif recent_in_app and len(action_history) >= 2:
+                pass  # We've been interacting inside Settings; stay there
+            elif not current_pkg or "settings" not in current_pkg:
+                print(f"  → Settings test: not in Settings app (current: {current_pkg or 'unknown'}), opening Android Settings...")
+                return {
+                    "action": "open_app",
+                    "app": target_package,
+                    "description": "Open Android Settings"
+                }
+
+        # ===== CALENDAR: ENSURE WE'RE IN CALENDAR APP =====
+        if target_package and ("calendar" in target_package.lower() or "simplemobiletools" in target_package.lower()):
+            pkg_act = get_current_package_and_activity()
+            current_pkg = (pkg_act.get("package") or "").lower() if pkg_act else ""
+            recent_open = any(a.get("action") == "open_app" for a in action_history[-2:])
+            recent_in_app = any(a.get("action") in ("tap", "type", "key", "swipe") for a in action_history[-5:])
+            in_calendar = current_pkg and ("calendar" in current_pkg or "simplemobiletools" in current_pkg)
+            if recent_open or (recent_in_app and len(action_history) >= 2) or in_calendar:
+                pass
+            else:
+                print(f"  → Calendar test: not in calendar app (current: {current_pkg or 'unknown'}), opening Calendar...")
+                return {
+                    "action": "open_app",
+                    "app": target_package,
+                    "description": "Open Calendar app"
+                }
+
         # ===== LOOP DETECTION DISABLED =====
         # Loop detection removed - let tests run for full 20 steps
         # The max_steps limit in main.py will handle stopping after 20 steps
@@ -312,7 +355,14 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
         # BUT: Skip RL patterns if benchmarking mode is enabled (for fair model comparison)
         successful_pattern = None
         if not DISABLE_RL_FOR_BENCHMARKING:
-            app_key = "duckduckgo" if (target_package and "duckduckgo" in target_package.lower()) else "obsidian"
+            if target_package and "duckduckgo" in target_package.lower():
+                app_key = "duckduckgo"
+            elif target_package and "settings" in target_package.lower():
+                app_key = "settings"
+            elif target_package and ("calendar" in target_package.lower() or "simplemobiletools" in target_package.lower()):
+                app_key = "calendar"
+            else:
+                app_key = "obsidian"
             context = {"app": app_key, "current_screen": android_state.get('current_screen', 'unknown'), "test_goal": test_text}
             successful_pattern = memory.get_successful_pattern(context)
         
@@ -667,6 +717,25 @@ def plan_next_action(test_text, screenshot_path, action_history, previous_test_p
                     }
         
         is_duckduckgo = bool(target_package and "duckduckgo" in target_package.lower())
+        # ===== DUCKDUCKGO TEST 1: SEARCH - submit after typing (avoids 17-step loop) =====
+        if is_duckduckgo and "search" in test_text.lower() and "weather" in test_text.lower():
+            if action_history:
+                last = action_history[-1]
+                # Detect "just typed weather" by text key or description (LLM sometimes omits "text")
+                just_typed_weather = (
+                    last.get("action") == "type"
+                    and (
+                        (last.get("text") or "").strip().lower() == "weather"
+                        or "weather" in (last.get("description") or "").lower()
+                    )
+                )
+                if just_typed_weather:
+                    print(f"  → DuckDuckGo search: Just typed 'weather', submitting search (ENTER)...")
+                    return {"action": "key", "code": 66, "description": "Press ENTER to submit search"}
+                # If we already pressed ENTER but still on suggestions, try tapping Search/Go button
+                if last.get("action") == "key" and last.get("code") == 66 and "enter" in (last.get("description") or "").lower():
+                    print(f"  → DuckDuckGo search: ENTER already sent, tapping Search/Go button...")
+                    return {"action": "tap", "element": "Search", "description": "Tap Search or Go to submit", "x": 0, "y": 0}
         # ===== DUCKDUCKGO: MENU (THREE DOTS TOP-RIGHT) + SETTINGS/PRIVACY =====
         # DuckDuckGo browser: three-dots menu is TOP-RIGHT (not Obsidian's top-left sidebar)
         if is_duckduckgo and ("settings" in test_text.lower() or "menu" in test_text.lower() or "privacy" in test_text.lower()):
@@ -1980,11 +2049,11 @@ Output ONLY valid JSON, no markdown:"""
             if should_avoid:
                 memory_hint += f"\n⚠️  Memory: Avoid typing - failed 3+ times: {avoid_reason}"
             
-            # Reward-based action selection hint
+            # Reward-based action selection hint (per-app rewards)
             if USE_REWARD_SELECTION:
-                # Get reward scores for common actions
-                tap_reward = memory.get_action_reward("tap")
-                type_reward = memory.get_action_reward("type")
+                app_for_reward = context.get("app", "obsidian")
+                tap_reward = memory.get_action_reward("tap", app_for_reward)
+                type_reward = memory.get_action_reward("type", app_for_reward)
                 if tap_reward > 0.1 or type_reward > 0.1:
                     reward_hint = f"\n💰 Reward scores: tap={tap_reward:.2f}, type={type_reward:.2f} (higher is better)"
         
