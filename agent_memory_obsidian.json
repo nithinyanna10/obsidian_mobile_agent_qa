@@ -1,0 +1,92 @@
+{
+  "successful_patterns": {
+    "test_complete:open obsidian, create a new vault named 'internvau": [
+      {
+        "actions": [
+          {
+            "action": "tap",
+            "description": "Tap 'Obsidian' to open the app",
+            "element": "Obsidian",
+            "_android_state": {
+              "current_screen": "unknown",
+              "ui_text": [
+                "id/content",
+                "id/launcher",
+                "id/drag_layer",
+                "id/scrim_view",
+                "id/workspace",
+                "id/search_container_workspace",
+                "id/bc_smartspace_view",
+                "id/smartspace_card_pager",
+                "id/text_group",
+                "Sat, Feb 14",
+                "id/date",
+                "id/smartspace_subtitle_group",
+                "Play Store",
+                "Play Store has 1 notification",
+                "Gmail",
+                "Photos",
+                "YouTube",
+                "Home",
+                "id/page_indicator",
+                "id/hotseat"
+              ],
+              "has_edittext": false,
+              "input_fields": [],
+              "buttons": [
+                {
+                  "text": "Sat, Feb 14",
+                  "bounds": "[99,296][1023,358]",
+                  "center": "(561, 327)"
+                },
+                {
+                  "text": "Play Store",
+                  "bounds": "[57,1483][267,1755]",
+                  "center": "(162, 1619)"
+                },
+                {
+                  "text": "Gmail",
+                  "bounds": "[309,1483][519,1755]",
+                  "center": "(414, 1619)"
+                },
+                {
+                  "text": "Photos",
+                  "bounds": "[561,1483][771,1755]",
+                  "center": "(666, 1619)"
+                },
+                {
+                  "text": "YouTube",
+                  "bounds": "[813,1483][1023,1755]",
+                  "center": "(918, 1619)"
+                },
+                {
+                  "text": "Phone",
+                  "bounds": "[76,1873][249,2068]",
+                  "center": "(162, 1970)"
+                },
+                {
+                  "text": "Messages",
+                  "bounds": "[328,1873][501,2068]",
+                  "center": "(414, 1970)"
+                },
+                {
+                  "text": "Chrome",
+                  "bounds": "[580,1873][753,2068]",
+                  "center": "(666, 1970)"
+                },
+                {
+                  "text": "Obsidian",
+                  "bounds": "[832,1873][1004,2068]",
+                  "center": "(918, 1970)"
+                },
+                {
+                  "text": "Google Lens",
+                  "bounds": "[867,2125][993,2290]",
+                  "center": "(930, 2207)"
+                }
+              ]
+            },
+            "_from_memory": true,
+            "_execution_result": {
+              "status": "executed",
+              "action": 
