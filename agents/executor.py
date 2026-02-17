@@ -39,8 +39,11 @@ def execute_action(action, logger=None, target_package=None):
     
     try:
         if action_type == "tap":
-            # Check if this is an app icon tap (should use open_app instead)
-            if "app icon" in description.lower() or ("open" in description.lower() and "icon" in description.lower()):
+            # Only convert to open_app when it's clearly launching the app from home, NOT in-app UI (e.g. Settings/gear icon)
+            desc_lower = description.lower()
+            is_app_launch = ("app icon" in desc_lower or ("open" in desc_lower and "icon" in desc_lower))
+            is_in_app_icon = any(x in desc_lower for x in ("settings", "gear", "settings icon", "gear icon", "menu icon", "search icon"))
+            if is_app_launch and not is_in_app_icon:
                 print(f"  📱 Converting app icon tap to open_app")
                 open_app(pkg)
                 time.sleep(3)
@@ -198,6 +201,14 @@ def execute_action(action, logger=None, target_package=None):
                     elif "storage" in desc_lower:
                         # Generic storage selection - prefer app/internal over device
                         search_texts = ["app storage", "internal storage", "app", "internal", "storage"]
+                    elif "let's do it" in desc_lower or "lets do it" in desc_lower:
+                        search_texts = ["let's do it", "let's", "do it", "it!"]
+                    elif "choose your browser" in desc_lower or "choose" in desc_lower and "browser" in desc_lower:
+                        search_texts = ["choose your browser", "choose", "browser", "your"]
+                    elif "next" in desc_lower and "button" in desc_lower:
+                        search_texts = ["next", "continue", "skip"]
+                    elif "search or go" in desc_lower or ("search" in desc_lower and "submit" in desc_lower):
+                        search_texts = ["go", "search", "submit"]
                     elif "create" in desc_lower and "note" in desc_lower:
                         search_texts = ["create", "note", "new note", "add note", "+", "new"]
                     elif "tap to create" in desc_lower and "note" in desc_lower:
