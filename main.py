@@ -11,7 +11,7 @@ from tools.adb_tools import reset_app, dump_ui
 from tools.memory import memory
 from tools.benchmark_logger import BenchmarkLogger
 from tools.subgoal_detector import subgoal_detector
-from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, DUCKDUCKGO_PACKAGE, get_target_package, OPENAI_MODEL, REASONING_MODEL, ENABLE_SUBGOAL_DETECTION, DISABLE_RL_FOR_BENCHMARKING, USE_XML_ELEMENT_ACTIONS
+from config import OPENAI_API_KEY, OBSIDIAN_PACKAGE, DUCKDUCKGO_PACKAGE, SETTINGS_PACKAGE, CALENDAR_PACKAGE, get_target_package, OPENAI_MODEL, REASONING_MODEL, ENABLE_SUBGOAL_DETECTION, DISABLE_RL_FOR_BENCHMARKING, USE_XML_ELEMENT_ACTIONS
 from datetime import datetime
 import xml.etree.ElementTree as ET
 import time
@@ -25,7 +25,8 @@ def run_test_suite(
     experiment_id: str = None,
     trial_num: int = 1,
     enable_logging: bool = True,
-    app: str = None
+    app: str = None,
+    no_reset: bool = False
 ):
     """
     Run QA tests using step-by-step visual planning.
@@ -35,13 +36,23 @@ def run_test_suite(
         experiment_id: Experiment identifier
         trial_num: Trial number
         enable_logging: Whether to enable benchmark logging
-        app: Target app - "obsidian" (default) or "duckduckgo"
+        app: Target app - "obsidian" (default), "duckduckgo", or "settings"
+        no_reset: If True, skip reset_app so existing app state is kept (faster reruns, same state as device)
     """
     # Select app: package and test list
-    if app and app.lower() == "duckduckgo":
+    app_key = (app or "obsidian").lower()
+    if app_key == "duckduckgo":
         os.environ["TARGET_PACKAGE"] = DUCKDUCKGO_PACKAGE
         tests = APP_TESTS["duckduckgo"]
         app_label = "DuckDuckGo"
+    elif app_key == "settings":
+        os.environ["TARGET_PACKAGE"] = SETTINGS_PACKAGE
+        tests = APP_TESTS["settings"]
+        app_label = "Android Settings"
+    elif app_key == "calendar":
+        os.environ["TARGET_PACKAGE"] = CALENDAR_PACKAGE
+        tests = APP_TESTS["calendar"]
+        app_label = "Calendar"
     else:
         os.environ["TARGET_PACKAGE"] = OBSIDIAN_PACKAGE
         tests = APP_TESTS.get("obsidian", QA_TESTS)
@@ -91,10 +102,13 @@ def run_test_suite(
     results = []
     previous_test_passed = False  # Track if previous test passed
     
-    # Reset app only before first test (tests are sequential)
-    print(f"🔄 Resetting app state before first test ({target_package})...")
-    reset_app(target_package)
-    print("✓ App reset complete\n")
+    # Reset app only before first test (tests are sequential), unless --no-reset to keep state
+    if no_reset:
+        print(f"⏭️  Skipping app reset (--no-reset): using existing app state\n")
+    else:
+        print(f"🔄 Resetting app state before first test ({target_package})...")
+        reset_app(target_package)
+        print("✓ App reset complete\n")
     
     config = {
         "max_steps": 20,
@@ -234,15 +248,22 @@ def run_test_suite(
                     failure_reason = execution_result.get('reason', 'Unknown error')
                     error_type = execution_result.get("error_type", "EXECUTION_FAILED")
                     
-                    # Record failure in memory for learning (app-aware: separate DuckDuckGo vs Obsidian)
-                    app_key = "duckduckgo" if (target_package and "duckduckgo" in target_package.lower()) else "obsidian"
+                    # Record failure in memory for learning (app-aware: separate by app)
+                    if target_package and "duckduckgo" in target_package.lower():
+                        app_key = "duckduckgo"
+                    elif target_package and "settings" in target_package.lower():
+                        app_key = "settings"
+                    elif target_package and ("calendar" in target_package.lower() or "simplemobiletools" in target_package.lower()):
+                        app_key = "calendar"
+                    else:
+                        app_key = "obsidian"
                     context = {
                         "app": app_key,
                         "current_screen": next_action.get('_android_state', {}).get('current_screen', 'unknown'),
                         "test_goal": test["text"]
                     }
                     memory.record_failure(context, action_history + [next_action], failure_reason)
-                    memory.update_reward(next_action.get("action", "unknown"), -0.5)  # Negative reward
+                    memory.update_reward(next_action.get("action", "unknown"), -0.5, app_key)  # Negative reward
                     
                     # Don't break immediately - let planner try a different approach
                     # But mark the action as failed in history
@@ -353,8 +374,15 @@ def run_test_suite(
             comparison = compare_with_expected(verdict, test["should_pass"])
             print(f"\n[TEST ID: {test['id']}] {comparison['message']}")
             
-            # Record outcome in memory for reinforcement learning (app-aware: separate DuckDuckGo vs Obsidian)
-            app_key = "duckduckgo" if (target_package and "duckduckgo" in target_package.lower()) else "obsidian"
+            # Record outcome in memory for reinforcement learning (app-aware: separate by app)
+            if target_package and "duckduckgo" in target_package.lower():
+                app_key = "duckduckgo"
+            elif target_package and "settings" in target_package.lower():
+                app_key = "settings"
+            elif target_package and ("calendar" in target_package.lower() or "simplemobiletools" in target_package.lower()):
+                app_key = "calendar"
+            else:
+                app_key = "obsidian"
             context = {
                 "app": app_key,
                 "current_screen": "test_complete",
@@ -363,9 +391,9 @@ def run_test_suite(
             if verdict == "PASS" and test["should_pass"]:
                 # Success! Record successful pattern
                 memory.record_success(context, action_history, f"Test {test['id']} passed")
-                # Positive rewards for successful actions
+                # Positive rewards for successful actions (per-app)
                 for action in action_history:
-                    memory.update_reward(action.get("action", "unknown"), 0.2)
+                    memory.update_reward(action.get("action", "unknown"), 0.2, app_key)
                 print(f"  💾 Recorded successful pattern in memory")
             elif verdict == "FAIL" and not test["should_pass"]:
                 # Expected failure - still a success in terms of test design
@@ -507,8 +535,9 @@ def run_test_suite(
     print("TEST SUITE SUMMARY")
     print(f"{'=' * 60}\n")
     
-    passed = sum(1 for r in results if r.get("status") == "PASS")
-    failed = sum(1 for r in results if r.get("status") == "FAIL")
+    # Passed = result matched expectation (e.g. expected FAIL and got FAIL counts as passed)
+    passed = sum(1 for r in results if r.get("comparison", {}).get("match") is True)
+    failed = sum(1 for r in results if r.get("comparison", {}).get("match") is False)
     errors = sum(1 for r in results if r.get("status") in ["ERROR", "EXECUTION_ERROR"])
     
     print(f"Total Tests: {len(results)}")
@@ -517,7 +546,8 @@ def run_test_suite(
     print(f"Errors: {errors}\n")
     
     for result in results:
-        status_icon = "✓" if result.get("status") == "PASS" else "✗" if result.get("status") == "FAIL" else "⚠"
+        match = result.get("comparison", {}).get("match")
+        status_icon = "✓" if match else "✗" if result.get("status") != "ERROR" else "⚠"
         print(f"{status_icon} [TEST ID: {result['test_id']}] Test {result['test_id']}: {result.get('status', 'UNKNOWN')} ({result.get('steps_taken', 0)} steps)")
         if result.get("reason"):
             print(f"   {result['reason']}")
@@ -530,7 +560,8 @@ def run_test_suite(
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run mobile QA test suite")
-    parser.add_argument("--app", choices=["obsidian", "duckduckgo"], default="obsidian", help="Target app (default: obsidian)")
+    parser.add_argument("--app", choices=["obsidian", "duckduckgo", "settings", "calendar"], default="obsidian", help="Target app (default: obsidian)")
     parser.add_argument("--no-logging", action="store_true", help="Disable benchmark logging")
+    parser.add_argument("--no-reset", action="store_true", help="Skip reset_app: keep existing app state (faster; state from device or previous run)")
     args = parser.parse_args()
-    run_test_suite(app=args.app, enable_logging=not args.no_logging)
+    run_test_suite(app=args.app, enable_logging=not args.no_logging, no_reset=args.no_reset)
