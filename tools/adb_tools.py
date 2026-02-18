@@ -132,6 +132,15 @@ def open_app(package_name):
     Args:
         package_name: Android package name (e.g., "md.obsidian")
     """
+    if "com.android.settings" in package_name:
+        adb("shell am start -n com.android.settings/.Settings")
+        time.sleep(2)
+        return
+    # Calendar apps: use am start (monkey often returns 252 for these)
+    if "calendar" in package_name.lower() or "simplemobiletools" in package_name.lower() or "fossify" in package_name.lower():
+        adb(f"shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p {package_name}")
+        time.sleep(2)
+        return
     adb(f"shell monkey -p {package_name} -c android.intent.category.LAUNCHER 1")
     time.sleep(3)  # Wait for app to launch
 
@@ -344,56 +353,20 @@ def find_element_by_text(text):
                 if bounds and bounds != "[0,0][0,0]":
                     return bounds
     
-    # General search: try all search terms
+    # General search: try all search terms (text, content-desc, resource-id, hint)
     for search_term in search_terms:
         for node in root.iter("node"):
             node_text = node.attrib.get("text", "").lower().strip()
             content_desc = node.attrib.get("content-desc", "").lower().strip()
             resource_id = node.attrib.get("resource-id", "").lower()
-            
-            # Check if search term matches text, content-desc, or resource-id
-            if (search_term in node_text or 
-                search_term in content_desc or 
-                search_term in resource_id):
+            hint = node.attrib.get("hint", "").lower().strip()
+            if (search_term in node_text or
+                search_term in content_desc or
+                search_term in resource_id or
+                search_term in hint):
                 bounds = node.attrib.get("bounds")
                 if bounds and bounds != "[0,0][0,0]":
                     return bounds
-    
-    return None
-
-
-def find_element_by_attribute(attr_name, attr_value, partial_match=True):
-    """
-    Find UI element by attribute (content-desc, resource-id, etc.)
-    
-    Args:
-        attr_name: Attribute name (e.g., "content-desc", "resource-id")
-        attr_value: Value to search for (case-insensitive)
-        partial_match: If True, match if value contains search term
-    
-    Returns:
-        Bounds string like "[96,1344][984,1476]" or None if not found
-    """
-    root = dump_ui()
-    if root is None:
-        return None
-    
-    search_value = attr_value.lower().strip()
-    
-    for node in root.iter("node"):
-        attr_val = node.attrib.get(attr_name, "").lower().strip()
-        if attr_val:
-            if partial_match:
-                if search_value in attr_val:
-                    bounds = node.attrib.get("bounds")
-                    if bounds and bounds != "[0,0][0,0]":
-                        return bounds
-            else:
-                if search_value == attr_val:
-                    bounds = node.attrib.get("bounds")
-                    if bounds and bounds != "[0,0][0,0]":
-                        return bounds
-    
     return None
 
 
@@ -481,6 +454,70 @@ def bounds_to_center(bounds):
     return (None, None)
 
 
+def build_xml_element_summary(root, max_tappable=20, max_input=10):
+    """
+    Build a compact summary of tappable elements and input fields from UI XML root.
+    Used for Phase 1: optional compact summary sent to the LLM.
+    
+    Args:
+        root: ElementTree root from dump_ui()
+        max_tappable: Max number of tappable entries to include
+        max_input: Max number of input field entries to include
+    
+    Returns:
+        String with one line per element: "tap: label (x, y)" or "input: hint (x, y)"
+    """
+    if root is None:
+        return ""
+    lines = []
+    tappable_seen = set()
+    input_seen = set()
+    for node in root.iter("node"):
+        bounds = node.attrib.get("bounds", "")
+        if not bounds or bounds == "[0,0][0,0]":
+            continue
+        cx, cy = bounds_to_center(bounds)
+        if cx is None:
+            continue
+        class_name = node.attrib.get("class", "").lower()
+        text = node.attrib.get("text", "").strip()
+        content_desc = node.attrib.get("content-desc", "").strip()
+        hint = node.attrib.get("hint", "").strip()
+        clickable = node.attrib.get("clickable", "false").lower() == "true"
+        if "edittext" in class_name:
+            label = hint or text or content_desc or "Input"
+            key = (label.lower(), cx, cy)
+            if key not in input_seen and len(input_seen) < max_input:
+                input_seen.add(key)
+                lines.append(f"input: \"{label}\" ({cx}, {cy})")
+        else:
+            label = text or content_desc
+            if not label:
+                continue
+            key = (label.lower(), cx, cy)
+            if key not in tappable_seen and (clickable or "button" in class_name or "image" in class_name) and len(tappable_seen) < max_tappable:
+                tappable_seen.add(key)
+                lines.append(f"tap: \"{label}\" ({cx}, {cy})")
+    return "\n".join(lines) if lines else ""
+
+
+def resolve_element_to_center(label):
+    """
+    Resolve a UI element label (text, content-desc, or hint) to center coordinates.
+    Used by executor when action has "element" key (Phase 2).
+    
+    Args:
+        label: Text to search for (case-insensitive, partial match on text/content-desc/hint)
+    
+    Returns:
+        Tuple (x, y) or (None, None) if not found
+    """
+    bounds = find_element_by_text(label)
+    if not bounds:
+        return (None, None)
+    return bounds_to_center(bounds)
+
+
 def detect_current_screen():
     """
     Detect current screen/activity using package and activity name
@@ -502,7 +539,14 @@ def detect_current_screen():
                 return {"current_screen": "welcome_setup", "package": "md.obsidian"}
             elif "VaultSelectionActivity" in output:
                 return {"current_screen": "vault_selection", "package": "md.obsidian"}
-        
+        if "duckduckgo" in output.lower():
+            return {"current_screen": "duckduckgo_browser", "package": "com.duckduckgo.mobile.android", "activity": "unknown"}
+        if "com.android.settings" in output:
+            return {"current_screen": "android_settings", "package": "com.android.settings", "activity": "unknown"}
+        if "fossify.calendar" in output or "simplemobiletools.calendar" in output or "com.google.android.calendar" in output:
+            pkg = "org.fossify.calendar" if "fossify" in output else "com.simplemobiletools.calendar" if "simplemobiletools" in output else "com.google.android.calendar"
+            return {"current_screen": "calendar", "package": pkg, "activity": "unknown"}
+
         return {"current_screen": "unknown"}
     except:
         return {"current_screen": "unknown"}
@@ -517,8 +561,18 @@ def get_current_package_and_activity():
     """
     try:
         result = adb("shell dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp'")
-        output = result.stdout
-        
+        output = result.stdout or ""
+        # Fallback: if app is clearly in focus, return it (avoids re-open loop when parsing fails)
+        if "duckduckgo" in output.lower():
+            return {"package": "com.duckduckgo.mobile.android", "activity": "unknown"}
+        if "com.android.settings" in output:
+            return {"package": "com.android.settings", "activity": "unknown"}
+        if "fossify.calendar" in output:
+            return {"package": "org.fossify.calendar", "activity": "unknown"}
+        if "simplemobiletools.calendar" in output:
+            return {"package": "com.simplemobiletools.calendar", "activity": "unknown"}
+        if "com.google.android.calendar" in output:
+            return {"package": "com.google.android.calendar", "activity": "unknown"}
         # Extract package/activity from output
         # Format: "mCurrentFocus=Window{... package/activity}"
         if "/" in output:
@@ -526,25 +580,30 @@ def get_current_package_and_activity():
             if len(parts) >= 2:
                 package_part = parts[0].split()[-1] if " " in parts[0] else parts[0]
                 activity_part = parts[1].split()[0].split("}")[0] if "}" in parts[1] else parts[1].split()[0]
-                
-                return {
-                    "package": package_part.strip(),
-                    "activity": activity_part.strip()
-                }
-    except:
+                pkg = package_part.strip()
+                if pkg:
+                    return {"package": pkg, "activity": activity_part.strip()}
+    except Exception:
         pass
     return None
 
 
 def reset_app(package_name="md.obsidian"):
     """
-    Reset app state by clearing app data
+    Reset app state by clearing app data (or force-stop + launch for system apps)
     Useful for ensuring clean state between tests
     
     Args:
         package_name: Android package name (e.g., "md.obsidian")
     """
     try:
+        # System apps (e.g. Settings) often cannot be cleared; just force-stop and relaunch
+        if "com.android.settings" in package_name:
+            adb(f"shell am force-stop {package_name}")
+            time.sleep(1)
+            adb(f"shell am start -n com.android.settings/.Settings")
+            time.sleep(2)
+            return
         adb(f"shell pm clear {package_name}")
         time.sleep(2)  # Wait for reset to complete
     except Exception as e:

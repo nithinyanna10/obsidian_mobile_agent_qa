@@ -92,6 +92,20 @@ class BenchmarkDB:
             )
         """)
         
+        # Action accuracy columns on runs (tap/swipe/scroll metrics)
+        for col, typ in [
+            ("taps_total", "INTEGER DEFAULT 0"),
+            ("taps_effective", "INTEGER DEFAULT 0"),
+            ("swipes_total", "INTEGER DEFAULT 0"),
+            ("swipes_effective", "INTEGER DEFAULT 0"),
+            ("scrolls_total", "INTEGER DEFAULT 0"),
+            ("scrolls_effective", "INTEGER DEFAULT 0"),
+        ]:
+            try:
+                self.conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
         # Create indexes for performance
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_model ON runs(model)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_test ON runs(test_id)")
@@ -133,6 +147,34 @@ class BenchmarkDB:
         self.conn.commit()
         return run_id
     
+    def _action_metrics_for_run(self, run_id: str) -> Dict[str, int]:
+        """Compute tap/swipe/scroll totals and effective counts from steps."""
+        rows = self.conn.execute(
+            "SELECT action_type, screen_changed, intended_success FROM steps WHERE run_id = ?",
+            (run_id,),
+        ).fetchall()
+        out = {
+            "taps_total": 0, "taps_effective": 0,
+            "swipes_total": 0, "swipes_effective": 0,
+            "scrolls_total": 0, "scrolls_effective": 0,
+        }
+        for row in rows:
+            atype = (row["action_type"] or "").lower()
+            effective = row["screen_changed"] or row["intended_success"]
+            if atype == "tap":
+                out["taps_total"] += 1
+                if effective:
+                    out["taps_effective"] += 1
+            elif atype == "swipe":
+                out["swipes_total"] += 1
+                if effective:
+                    out["swipes_effective"] += 1
+            elif atype == "scroll":
+                out["scrolls_total"] += 1
+                if effective:
+                    out["scrolls_effective"] += 1
+        return out
+
     def end_run(
         self,
         run_id: str,
@@ -145,9 +187,15 @@ class BenchmarkDB:
         tokens_in: int = 0,
         tokens_out: int = 0,
         api_calls: int = 0,
-        cost_usd: float = 0.0
+        cost_usd: float = 0.0,
+        taps_total: Optional[int] = None,
+        taps_effective: Optional[int] = None,
+        swipes_total: Optional[int] = None,
+        swipes_effective: Optional[int] = None,
+        scrolls_total: Optional[int] = None,
+        scrolls_effective: Optional[int] = None,
     ):
-        """End a run and update final metrics"""
+        """End a run and update final metrics. Action metrics computed from steps if not provided."""
         started_at = self.conn.execute(
             "SELECT started_at FROM runs WHERE run_id = ?", (run_id,)
         ).fetchone()["started_at"]
@@ -155,7 +203,16 @@ class BenchmarkDB:
         started = datetime.fromisoformat(started_at)
         ended = datetime.utcnow()
         duration_ms = int((ended - started).total_seconds() * 1000)
-        
+
+        if taps_total is None:
+            metrics = self._action_metrics_for_run(run_id)
+            taps_total = metrics["taps_total"]
+            taps_effective = metrics["taps_effective"]
+            swipes_total = metrics["swipes_total"]
+            swipes_effective = metrics["swipes_effective"]
+            scrolls_total = metrics["scrolls_total"]
+            scrolls_effective = metrics["scrolls_effective"]
+
         self.conn.execute("""
             UPDATE runs SET
                 ended_at = ?,
@@ -169,12 +226,22 @@ class BenchmarkDB:
                 tokens_in = ?,
                 tokens_out = ?,
                 api_calls = ?,
-                cost_usd = ?
+                cost_usd = ?,
+                taps_total = ?,
+                taps_effective = ?,
+                swipes_total = ?,
+                swipes_effective = ?,
+                scrolls_total = ?,
+                scrolls_effective = ?
             WHERE run_id = ?
         """, (
             ended.isoformat(), duration_ms, final_status, failure_reason,
             steps_count, recovery_count, int(crash_detected), int(rate_limit_fail),
-            tokens_in, tokens_out, api_calls, cost_usd, run_id
+            tokens_in, tokens_out, api_calls, cost_usd,
+            taps_total or 0, taps_effective or 0,
+            swipes_total or 0, swipes_effective or 0,
+            scrolls_total or 0, scrolls_effective or 0,
+            run_id
         ))
         self.conn.commit()
     
@@ -295,8 +362,22 @@ class BenchmarkDB:
                    AVG(CASE WHEN s.intended_success=1 THEN 1.0 ELSE 0.0 END) AS tap_success
             FROM steps s
             JOIN runs r ON r.run_id=s.run_id
-            {where_clause.replace('runs', 'r')} AND s.action_type IN ('tap_xy','tap_text')
+            {where_clause.replace('runs', 'r')} AND s.action_type IN ('tap_xy','tap_text','tap')
             GROUP BY r.model, s.action_source
+        """, params).fetchall()
+
+        # Action accuracy (tap, swipe, scroll) per model
+        action_accuracy = self.conn.execute(f"""
+            SELECT model,
+                   SUM(taps_total) AS taps_total,
+                   SUM(taps_effective) AS taps_effective,
+                   SUM(swipes_total) AS swipes_total,
+                   SUM(swipes_effective) AS swipes_effective,
+                   SUM(scrolls_total) AS scrolls_total,
+                   SUM(scrolls_effective) AS scrolls_effective
+            FROM runs
+            {where_clause}
+            GROUP BY model
         """, params).fetchall()
         
         return {
@@ -304,7 +385,8 @@ class BenchmarkDB:
             "fail_rate": [dict(row) for row in fail_rate],
             "efficiency": [dict(row) for row in efficiency],
             "stuck_rate": [dict(row) for row in stuck_rate],
-            "action_source_stats": [dict(row) for row in action_source_stats]
+            "action_source_stats": [dict(row) for row in action_source_stats],
+            "action_accuracy": [dict(row) for row in action_accuracy]
         }
     
     def close(self):

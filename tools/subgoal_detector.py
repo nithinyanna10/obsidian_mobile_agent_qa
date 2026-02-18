@@ -73,13 +73,18 @@ class SubgoalDetector:
         # Detect subgoals based on patterns
         for subgoal_type, patterns in self.SUBGOAL_PATTERNS.items():
             for pattern in patterns:
-                if re.search(pattern, test_lower):
-                    subgoals.append({
-                        "type": subgoal_type,
-                        "description": self._get_subgoal_description(subgoal_type, test_text),
-                        "achieved": False
-                    })
-                    break  # Only add once per type
+                if not re.search(pattern, test_lower):
+                    continue
+                # Don't add "open_settings" when "Settings" is only describing UI (e.g. "Settings gear icon visible")
+                if subgoal_type == "open_settings":
+                    if re.search(r"main.*view|calendar view|verify.*(?:gear|icon).*visible", test_lower) and re.search(r"settings\s*(?:gear\s*)?icon|gear\s*icon", test_lower):
+                        continue  # Test is about verifying main view; "Settings" is just the icon label, not a subgoal
+                subgoals.append({
+                    "type": subgoal_type,
+                    "description": self._get_subgoal_description(subgoal_type, test_text),
+                    "achieved": False
+                })
+                break  # Only add once per type
         
         # Add specific subgoals based on test content
         if "create" in test_lower and "vault" in test_lower:

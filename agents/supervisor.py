@@ -153,6 +153,16 @@ def verify(test_text, screenshot_path, expected_result=None, logger=None):
         img_buffer.seek(0)
         img_data = base64.b64encode(img_buffer.read()).decode('utf-8')
         
+        is_duckduckgo = "duckduckgo" in (test_text or "").lower()
+        duckduckgo_rules = ""
+        if is_duckduckgo:
+            duckduckgo_rules = """
+**DUCKDUCKGO TESTS (apply when test mentions DuckDuckGo):**
+- **DuckDuckGo Test 1 (search weather):** If the test asks to search for "weather" and verify search results: PASS if the screenshot shows a *loaded* search results page (list of results, forecast, weather snippets, or clear result cards). FAIL if only the search bar, search suggestions, or keyboard is visible (search was not submitted).
+- **DuckDuckGo Test 2 (Settings screen):** If the test asks to open menu and verify Settings/Privacy screen: PASS if a settings or preferences screen is visible (e.g. heading or list with "Settings", "Privacy", "Appearance", or similar). Do NOT require accent color or theme options—that is for other tests. FAIL only if no settings-like screen is visible (e.g. still on search/home).
+- **DuckDuckGo Test 3 (Export search history to PDF):** This feature does not exist. If "Export search history to PDF" is NOT in the menu/screen → return FAIL (element not found, as expected). If you cannot see the menu → return FAIL.
+- **DuckDuckGo Test 4 (Theme System default + green checkmark):** If the test asks for theme "System default" with green checkmark: return FAIL if the label or icon does not match (e.g. theme is "System default" but there is no green checkmark, or icon differs). FAIL = correct outcome for this test.
+"""
         prompt = f"""You are a QA Supervisor agent for mobile app testing.
 
 Test Case: "{test_text}"
@@ -165,8 +175,9 @@ Rules:
 3. For tests that should FAIL: verify the expected failure is visible (e.g., element not found, assertion mismatch)
 4. If the required element is NOT visible → FAIL
 5. If assertion doesn't match (e.g., color is not red) → FAIL
+{duckduckgo_rules}
 
-**SPECIFIC TEST 1 RULES (Vault Creation):**
+**SPECIFIC TEST 1 RULES (Obsidian Vault Creation - only if test is about Obsidian/vault):**
 - **CRITICAL**: If you see "Create note" or "New note" or "Create new note" button visible → Test 1 MUST PASS (vault is created and entered)
 - If you see "files in internvault" or vault name "InternVault" visible → Test 1 PASSED
 - **IMPORTANT**: The presence of "create new note" button is PROOF that the vault was created and entered successfully
